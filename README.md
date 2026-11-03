@@ -10,6 +10,25 @@ Our inspiration is [DFlash](https://arxiv.org/abs/2602.06036), which uses a ligh
 
 By the end of Quarter 1, we aim to deliver a usable Mac MVP with a reproducible baseline, an accelerated generation mode, and measurements of latency, memory, and image quality. iPhone deployment is a stretch goal after we establish a benefit on Mac. Neither device support nor a speedup is demonstrated yet.
 
+## Running Klein Base 4B on Mac
+
+The local test uses the community [MFLUX Q4 conversion of FLUX.2 Klein Base 4B](https://huggingface.co/mflux-community/flux-2-klein-base-4b-mflux-q4), pinned to revision `f69aa0b43285d0db24695ba68faabbdb1a0ad016`. This is the undistilled Base model with approximately 4.6 GB of quantized weights, not the four-step distilled Klein model. Download size is not peak runtime memory.
+
+Install on an Apple Silicon Mac with `uv` available:
+
+```sh
+uv venv .venv
+uv pip install --python .venv/bin/python -r requirements-mac.txt
+.venv/bin/python scripts/download-klein.py
+bash scripts/run-klein.sh
+```
+
+Edit `prompts/klein-test.txt` to change the prompt. The script defaults to 512 × 512, 50 steps, guidance 3.5, seed 42, FP16 compute, and low-RAM mode. It saves the image, generation metadata, and timing log under `outputs/`. For a quick execution check, use `bash scripts/run-klein.sh --steps 4`; a four-step Base run is not a quality benchmark. Additional CLI flags override the defaults, for example `--steps 28 --output outputs/klein-28.png`.
+
+The environment, model downloads, caches, and generated outputs are ignored by Git. The first generation can include initialization and compilation costs. The CLI timing includes model loading and should not be reported as warm inference latency. Run from a local terminal with Metal GPU access; restricted sandboxes may report that no Metal device is available.
+
+Initial execution check on an M1 Pro with 16 GB unified memory and macOS 27.0.1 succeeded using the defaults above and MFLUX 0.24.0. One run took 369 seconds end to end, reported 3.84 GB peak MLX memory, and produced a valid image matching the fox-and-mug prompt. macOS `time` separately reported a 5.32 GB peak process memory footprint. These memory measures have different scopes. This single run confirms execution, not a comparative performance or quality result.
+
 ## Goals and research question
 
 Our research question is: **Can an adaptive prediction-and-verification algorithm reduce image generation latency on Apple Silicon enough to justify its extra memory and verification cost?**
@@ -70,7 +89,7 @@ The MVP should run locally on one documented Mac, expose both modes, and produce
 
 ## Progress and team contributions
 
-The team has completed an initial literature review and identified candidate acceleration methods. This repository currently contains the project documentation; it has no generation implementation or preliminary device benchmarks.
+The team has completed an initial literature review and identified candidate acceleration methods. The repository now includes a Mac setup and test prompt for an existing quantized Klein Base 4B implementation. Our own acceleration algorithm and comparative device benchmarks remain to be implemented.
 
 | Team member | Literature review completed |
 | --- | --- |
