@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import sys
+import subprocess
+from importlib.metadata import version
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +48,8 @@ def main():
         reward = ImageReward.load(name=checkpoint, med_config=config, device="cpu")
     power = json.loads(args.power_samples.read_text()) if args.power_samples else None
     info = dict(clip_model="openai/clip-vit-base-patch32", clip_revision=revision,
+        git_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+        packages={p:version(p) for p in ["torch","torchvision","transformers","lpips","scikit-image","image-reward","numpy"]},
         clip_definition="100 * max(0, cosine(image,text)); CLIP truncates text at 77 tokens",
         lpips="alex, v0.1, RGB [-1,1], original resolution", image_reward="ImageReward-v1.0" if reward else None,
         image_reward_revision=reward_revision,
@@ -60,6 +64,7 @@ def main():
             ref = refs[(r["repeat"], r["prompt_id"], r["seed"])]
             reference = Image.open(args.out / ref["image"]).convert("RGB")
             metrics = similarity(reference, image)
+            metrics["image_sha256"] = hashlib.sha256((args.out / r["image"]).read_bytes()).hexdigest()
             metrics["lpips"] = float(perceptual(tensor(reference), tensor(image)).item())
             inputs = processor(text=[r["prompt"]], images=image, return_tensors="pt", padding=True, truncation=True)
             prediction = clip(**inputs)
