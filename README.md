@@ -40,10 +40,15 @@ uv pip install --python .venv/bin/python -r requirements-eval.txt
 .venv/bin/python scripts/check-klein-equivalence.py
 .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/python scripts/evaluate-klein.py --out outputs/evaluation
-.venv/bin/python scripts/score-evaluation.py --out outputs/evaluation --image-reward
+uv venv --python 3.11 .venv-quality
+uv pip install --python .venv-quality/bin/python -r requirements-quality.txt
+.venv-quality/bin/python scripts/score-evaluation.py --out outputs/evaluation --image-reward
+.venv/bin/python scripts/report-evaluation.py --out outputs/evaluation
 ```
 
 Generation defaults to all five prompts and seed 42, with one run per pair/configuration. Increase coverage with `--seeds 42 43 44 --repeats 3` in a new output directory. The runner rejects changed experiment identities when resuming. It warms full/prediction/verification paths before measurement and rotates configuration order across prompts. Prompt encoding is performed for each trial with resident model weights. Total latency includes encoding, denoising, and image decoding, excluding model load, PNG writing, and scoring. Full-pipeline peak MLX allocation is separate from process or whole-system memory. Full transformer passes and verification-block passes count both classifier-free guidance branches. Rejected forecasts incur both their check and a subsequent full pass.
+
+Quality scoring uses a separate Python 3.11 environment because ImageReward's older Transformers and Diffusers APIs conflict with MFLUX's newer dependencies. It runs on CPU after generation completes. `requirements-quality.txt` locks that environment; `.venv-quality/` is excluded from Git.
 
 Offline scoring reports LPIPS-Alex, SSIM, PSNR, CLIP alignment, and optionally ImageReward. PSNR is null for identical images, with `identical_pixels=true`, to avoid invalid infinite JSON numbers. Similarity uses the matching full-50 output as reference. CLIP uses `openai/clip-vit-base-patch32` with its revision recorded; it is not a compositional correctness test. GenEval and blinded human preference require separate evaluators/raters and are not replaced by CLIP or ImageReward. FID is intentionally omitted for this small prompt suite.
 

@@ -15,7 +15,7 @@ from PIL import Image
 import torch
 import lpips
 from transformers import CLIPModel, CLIPProcessor
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, hf_hub_download
 from evaluation.metrics import similarity, integrate_energy
 
 
@@ -37,13 +37,18 @@ def main():
     processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", revision=revision)
     perceptual = lpips.LPIPS(net="alex").eval()
     reward = None
+    reward_revision = None
     if args.image_reward:
         import ImageReward
-        reward = ImageReward.load(device="cpu", download_root=str(ROOT / ".cache/ImageReward"))
+        reward_revision = HfApi().model_info("THUDM/ImageReward").sha
+        checkpoint = hf_hub_download("THUDM/ImageReward", "ImageReward.pt", revision=reward_revision)
+        config = hf_hub_download("THUDM/ImageReward", "med_config.json", revision=reward_revision)
+        reward = ImageReward.load(name=checkpoint, med_config=config, device="cpu")
     power = json.loads(args.power_samples.read_text()) if args.power_samples else None
     info = dict(clip_model="openai/clip-vit-base-patch32", clip_revision=revision,
         clip_definition="100 * max(0, cosine(image,text)); CLIP truncates text at 77 tokens",
         lpips="alex, v0.1, RGB [-1,1], original resolution", image_reward="ImageReward-v1.0" if reward else None,
+        image_reward_revision=reward_revision,
         energy_scope=power["scope"] if power else None, geneval=None, human_preference=None,
         measurements_sha256=hashlib.sha256((args.out / "measurements.jsonl").read_bytes()).hexdigest())
     (args.out / "scoring.json").write_text(json.dumps(info, indent=2))
