@@ -49,7 +49,10 @@ def main():
     power = json.loads(args.power_samples.read_text()) if args.power_samples else None
     info = dict(clip_model="openai/clip-vit-base-patch32", clip_revision=revision,
         git_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+        source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         packages={p:version(p) for p in ["torch","torchvision","transformers","lpips","scikit-image","image-reward","numpy"]},
+        ssim="skimage structural_similarity, default uniform 7x7 window, RGB channel mean, data_range=255",
+        psnr="10*log10(255^2/MSE), RGB uint8; null for zero MSE with identical_pixels=true",
         clip_definition="100 * max(0, cosine(image,text)); CLIP truncates text at 77 tokens",
         lpips="alex, v0.1, RGB [-1,1], original resolution", image_reward="ImageReward-v1.0" if reward else None,
         image_reward_revision=reward_revision,

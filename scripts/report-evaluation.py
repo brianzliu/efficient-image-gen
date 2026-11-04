@@ -84,7 +84,10 @@ def main():
         fig.tight_layout(rect=[0,.05,1,1]); fig.savefig(args.report / "energy.png",dpi=160); plt.close(fig)
         shutil.copyfile(args.out / "power.json", args.report / "power.json")
     for pid in range(len(identity["prompts"])):
-        fig,axes=plt.subplots(2,4,figsize=(14,8))
+        nrows=(len(names)+3)//4
+        fig,axes=plt.subplots(nrows,4,figsize=(14,4*nrows))
+        for ax in axes.flat:
+            ax.axis("off")
         for ax,name in zip(axes.flat,names):
             row=next(r for r in rows if r["prompt_id"]==pid and r["config"]==name)
             ax.imshow(Image.open(args.out / row["image"])); ax.axis("off"); ax.set_title(name)
@@ -99,6 +102,7 @@ def main():
            "Configurations rotate order across prompts. All thresholds were specified before inspecting results; these prompts remain a development set, not a held-out generalization test.","",
            "Full-50 is the reference. Full-17 reduces sampling steps. Fixed-3 and Taylor-3 each evaluate 17 full steps while retaining 50 scheduler updates. "
            "The two threshold settings compare stricter versus looser verification. Speca-0.3-1.0 removes threshold decay; speca-nocheck removes verification while retaining warmup and the reuse cap.","",
+           "Taylor-3 uses first-order linear extrapolation. The SpeCa-named configurations are Alan's simplified final-block verification heuristic, not validated reproductions of the published implementations. In this policy the first predicted step after a full computation is unchecked, with subsequent predictions checked subject to the configured minimum. These are approximate methods without a lossless guarantee.","",
            "## Measurements", "",
            "| Configuration | Images | Total s | Speedup | Full steps | Checks | Rejections | Peak MLX GB | Cache MB | LPIPS ↓ | SSIM ↑ | CLIP ↑ | ImageReward ↑ | CPU+GPU J/image | Energy n |",
            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
@@ -113,7 +117,7 @@ def main():
         "GenEval and human preference are unmeasured. CLIP is a broad alignment proxy and ImageReward, if available, is a learned preference proxy, not a human judgment or a compositional correctness guarantee.","",
         "LPIPS/SSIM/PSNR compare each output with the matching full-50 image. Different but valid images can have poor similarity; higher similarity does not prove higher quality. The full-50 reference can itself contain defects. Identical-image PSNR is represented by null with an explicit identity flag. No FID is computed from this small sample.","",
         "One seed and one repeat cannot establish cross-seed robustness or isolate thermal/run-order noise. There are no confidence intervals or p95 claims. This is an exploratory ablation, with no predeclared numerical noninferiority threshold. Do not describe approximate feature prediction as lossless speculation.","",
-        "## Reproduction", "", "```sh", ".venv/bin/python scripts/evaluate-klein.py --out outputs/evaluation", ".venv-quality/bin/python scripts/score-evaluation.py --out outputs/evaluation --image-reward", ".venv/bin/python scripts/report-evaluation.py --out outputs/evaluation", "```", "",
+        "## Reproduction", "", "```sh", ".venv/bin/python scripts/evaluate-klein.py --out outputs/evaluation", ".venv-quality/bin/python scripts/score-evaluation.py --out outputs/evaluation --image-reward" + (" --power-samples outputs/evaluation/power.json" if energy_pairs else ""), ".venv/bin/python scripts/report-evaluation.py --out outputs/evaluation", "```", "",
         "Environment locks: requirements-mac.txt, requirements-eval.txt, requirements-quality.txt. Raw measurements, scoring metadata, the generation manifest, and all pilot outputs accompany this report. Generation and scoring run separately. Hardware telemetry also includes system RAM/swap usage and GPU temperature for diagnosing environmental interference.","",
         "## Visual inspection", ""]
     for pid,prompt in enumerate(identity["prompts"]):

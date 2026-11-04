@@ -29,11 +29,11 @@ The environment, model downloads, caches, and generated outputs are ignored by G
 
 Initial execution check on an M1 Pro with 16 GB unified memory and macOS 27.0.1 succeeded using the defaults above and MFLUX 0.24.0. One run took 369 seconds end to end, reported 3.84 GB peak MLX memory, and produced a valid image matching the fox-and-mug prompt. macOS `time` separately reported a 5.32 GB peak process memory footprint. These memory measures have different scopes. This single run confirms execution, not a comparative performance or quality result.
 
-## Goals and research question
-
-### Evaluating acceleration
+## Evaluating acceleration
 
 The evaluator runs all eight configured ablations at 512 × 512: `full-50`, `full-17`, `fixed-3`, `taylor-3`, `speca-0.1-0.5`, `speca-0.3-0.5`, `speca-0.3-1.0`, and `speca-nocheck`. The last disables verification while retaining adaptive policy warmup and the maximum reuse interval. Fixed and Taylor interval three each use 17 full steps; adaptive methods choose their full-step counts. These are approximate feature-reuse methods, not distribution-preserving speculative sampling.
+
+Taylor reuse here is first-order extrapolation. The adaptive variants are SpeCa-inspired implementations with a final-block heuristic, not validated reproductions of the published methods. Their first predicted step after each full computation is unchecked; subsequent predictions are checked according to the policy.
 
 ```sh
 uv pip install --python .venv/bin/python -r requirements-eval.txt
@@ -66,6 +66,8 @@ touch outputs/evaluation/stop-power
 ```
 
 The collector samples every 500 ms and positions interval-averaged power at approximate interval midpoints. It records temperature and system RAM/swap usage alongside CPU+GPU watts. Remove an old stop file before starting a new collection. Report energy only on prompt/seed pairs covered for every configuration. Estimates include background activity and exclude other device components; there is no idle subtraction or external-meter calibration.
+
+## Goals and research question
 
 Our research question is: **Can an adaptive prediction-and-verification algorithm reduce image generation latency on Apple Silicon enough to justify its extra memory and verification cost?**
 
