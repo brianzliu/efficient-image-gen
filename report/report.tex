@@ -1,0 +1,78 @@
+% !TEX TS-program = xelatex
+% !BIB TS-program = bibtex
+\documentclass[12pt,letterpaper]{article}
+\usepackage{style/dsc180reportstyle} % import dsc180reportstyle.sty
+
+
+\title{DSC Capstone LaTeX Template}
+
+\author{Brian Liu \\
+  {\tt ebzl002@ucsd.edu} \\\And
+  Alexander Takamoto \\
+  {\tt atakamoto@ucsd.edu} \\\And
+  Edward Zhang \\
+  {\tt edz001@ucsd.edu} \\\And
+  Alan Xia\\
+  {\tt alxia@ucsd.edu} \\\And
+  Zhijian Liu \\
+  {\tt zhijian@ucsd.edu} \\}
+
+\begin{document}
+\maketitle
+
+
+\begin{abstract}
+    \textcolor{LightGrey}{
+    }
+\end{abstract}
+
+\begin{center}
+Code: \url{https://github.com/brianzliu/efficient-image-gen}
+\end{center}
+
+\maketoc
+\clearpage
+
+
+\section{Introduction}
+
+Image generation often revolves around repeatedly adjusting a prompt and checking the output until the image matches what the user has in mind. Diffusion models can generate high quality images from these prompts by gradually transforming random noise into an image, relying on the prompt to guide each denoising step \citep{rombach2021highresolution}. Cloud services can provide the hardware for users to run these models, but running them locally allows users to experiment on devices they already own. However, the substantial computational and memory demands of large diffusion models can make running them on personal devices impractical \citep{zhao2024mobilediffusioninstanttexttoimagegeneration}.
+Even when a model fits in memory, generating each image can also take a considerable amount of time \citep{li2025svdquantabsorbingoutlierslowrank}, and this extra time adds up as users refine their prompts. In this project, we aim to develop and evaluate an algorithm that speeds up image generation on Apple Silicon while preserving image quality and staying within its memory budget.
+
+\subsection{Related Work}
+
+\textbf{Diffusion and flow matching}
+\citep{ho2020denoisingdiffusionprobabilisticmodels}
+\citep{rombach2021highresolution}
+\citep{liu2023iclr-flow}
+
+\textbf{Model compression}
+\citep{li2025svdquantabsorbingoutlierslowrank}
+\citep{zhao2024mobilediffusioninstanttexttoimagegeneration}
+
+\textbf{Feature caching and prediction}
+\citep{Liu_2025_ICCV}
+\citep{Liu_2025}
+
+\textbf{Speculative generation}
+\citep{chen2026dflashblockdiffusionflash}
+\citep{debortoli2025accelerateddiffusionmodelsspeculative}
+\citep{teng2025acceleratingautoregressivetexttoimagegeneration}
+
+\subsection{Data}
+
+
+\section{Methods}
+
+\section{Results}
+
+\section{Discussion}
+
+\section{Conclusion}
+
+\makereference
+
+\bibliography{reference}
+\bibliographystyle{style/dsc180bibstyle}
+
+\end{document}

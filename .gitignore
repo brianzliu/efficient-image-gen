@@ -6,3 +6,17 @@ models/
 outputs/
 __pycache__/
 .DS_Store
+
+# generated LaTeX report files
+/report/*.aux
+/report/*.bbl
+/report/*.blg
+/report/*.fdb_latexmk
+/report/*.fls
+/report/*.log
+/report/*.out
+/report/*.synctex*
+/report/*.thm
+/report/*.toc
+/report/*.xdv
+/report/report.pdf

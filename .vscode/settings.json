@@ -1,0 +1,8 @@
+{
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1500,
+  "latex-workshop.latex.autoBuild.run": "onFileChange",
+  "latex-workshop.latex.build.enableMagicComments": false,
+  "latex-workshop.latex.recipe.default": "latexmk (xelatex)",
+  "latex-workshop.view.pdf.viewer": "tab"
+}
