@@ -39,6 +39,9 @@ def main():
     for row in rows:
         groups[row["config"]].append(row)
     names = identity["configs"]
+    energy_pairs = set.intersection(*[
+        {(r["repeat"],r["prompt_id"],r["seed"]) for r in groups[name] if r.get("energy_j") is not None}
+        for name in names])
     def mean(name, metric):
         vals = [r[metric] for r in groups[name] if r.get(metric) is not None]
         return float(np.mean(vals)) if vals else None
@@ -51,6 +54,9 @@ def main():
             item[field] = mean(name,field)
         item["min_s"] = min(r["total_s"] for r in groups[name])
         item["max_s"] = max(r["total_s"] for r in groups[name])
+        energies = [r["energy_j"] for r in groups[name] if (r["repeat"],r["prompt_id"],r["seed"]) in energy_pairs]
+        item["energy_j"] = float(np.mean(energies)) if energies else None
+        item["energy_n"] = len(energies)
         summaries.append(item)
     (args.report / "summary.json").write_text(json.dumps(summaries,indent=2,allow_nan=False))
     plt.rcParams.update({"font.size":10, "axes.spines.top":False,"axes.spines.right":False})
@@ -70,6 +76,13 @@ def main():
     axes[0].barh(names,[s["total_s"] for s in summaries]); axes[0].set(xlabel="Mean seconds/image",title="Warm generation latency")
     axes[1].barh(names,[s["peak_mlx_gb"] for s in summaries]); axes[1].set(xlabel="Mean per-trial peak MLX allocation (GB, decimal)",title="Full generation window allocation")
     fig.tight_layout(); fig.savefig(args.report / "resources.png",dpi=160); plt.close(fig)
+    if energy_pairs:
+        fig,ax=plt.subplots(figsize=(9,5))
+        ax.barh(names,[s["energy_j"] for s in summaries])
+        ax.set(xlabel="Mean estimated CPU+GPU energy (joules/image)",title=f"Matched energy subset: {len(energy_pairs)} prompt/seed pairs per configuration")
+        fig.text(.01,.01,"macmon v0.10.0, 500 ms samples; background activity included; not whole-device energy.",fontsize=8)
+        fig.tight_layout(rect=[0,.05,1,1]); fig.savefig(args.report / "energy.png",dpi=160); plt.close(fig)
+        shutil.copyfile(args.out / "power.json", args.report / "power.json")
     for pid in range(len(identity["prompts"])):
         fig,axes=plt.subplots(2,4,figsize=(14,8))
         for ax,name in zip(axes.flat,names):
@@ -87,23 +100,33 @@ def main():
            "Full-50 is the reference. Full-17 reduces sampling steps. Fixed-3 and Taylor-3 each evaluate 17 full steps while retaining 50 scheduler updates. "
            "The two threshold settings compare stricter versus looser verification. Speca-0.3-1.0 removes threshold decay; speca-nocheck removes verification while retaining warmup and the reuse cap.","",
            "## Measurements", "",
-           "| Configuration | Images | Total s | Speedup | Full steps | Checks | Rejections | Peak MLX GB | Cache MB | LPIPS ↓ | SSIM ↑ | CLIP ↑ | ImageReward ↑ |",
-           "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+           "| Configuration | Images | Total s | Speedup | Full steps | Checks | Rejections | Peak MLX GB | Cache MB | LPIPS ↓ | SSIM ↑ | CLIP ↑ | ImageReward ↑ | CPU+GPU J/image | Energy n |",
+           "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     def fmt(v): return "unmeasured" if v is None else f"{v:.3f}"
     for s in summaries:
-        lines.append("| "+" | ".join([s["config"],str(s["n"])]+[fmt(s[k]) for k in ["total_s","speedup","full_steps","checked_steps","rejected_steps","peak_mlx_gb","cache_mb","lpips","ssim","clip_score","image_reward"]])+" |")
+        lines.append("| "+" | ".join([s["config"],str(s["n"])]+[fmt(s[k]) for k in ["total_s","speedup","full_steps","checked_steps","rejected_steps","peak_mlx_gb","cache_mb","lpips","ssim","clip_score","image_reward","energy_j"]]+[str(s["energy_n"])])+" |")
     lines += ["", "![Quality and latency](tradeoffs.png)","", "![Resource measurements](resources.png)","",
         "All values in the table are arithmetic means over the same prompt/seed pairs. Speedup is the ratio of mean full-50 time to mean configuration time. Individual results and latency ranges are in results.csv and summary.json.","",
         "## Scope and limitations", "",
         "Total latency covers prompt encoding, denoising, and decoding with resident weights and GPU synchronization. It excludes model loading, PNG writing, and offline scoring. The runner warms the full, forecast, and verification paths. MLX peak memory covers the generation window and includes resident weights; it is not total process footprint or whole-device memory. Persistent prompt-independent weights stay loaded across trials.","",
-        "Energy is unmeasured: sudo authentication prevented powermetrics collection. No joules/image or energy-saving claim can be derived from these timings. GenEval and human preference are also unmeasured. CLIP is a broad alignment proxy and ImageReward, if available, is a learned preference proxy, not a human judgment or a compositional correctness guarantee.","",
+        (f"Energy is estimated from macmon v0.10.0 CPU+GPU telemetry on the common subset of {len(energy_pairs)} prompt/seed pairs with complete coverage for every configuration. Earlier images without telemetry are excluded from ALL energy averages. Samples are 500 ms interval averages, positioned approximately at interval midpoints and integrated with linear interpolation. Gaps over two seconds are rejected. These are system component estimates including background activity, not process-isolated, wall-socket, or whole-device energy. No idle subtraction or external-meter calibration was performed. The manifest's initial powermetrics-unavailable status predates this alternative collector; scoring.json records the actual energy scope." if energy_pairs else "Energy is unmeasured; no energy savings can be inferred from latency."),"",
+        "GenEval and human preference are unmeasured. CLIP is a broad alignment proxy and ImageReward, if available, is a learned preference proxy, not a human judgment or a compositional correctness guarantee.","",
         "LPIPS/SSIM/PSNR compare each output with the matching full-50 image. Different but valid images can have poor similarity; higher similarity does not prove higher quality. The full-50 reference can itself contain defects. Identical-image PSNR is represented by null with an explicit identity flag. No FID is computed from this small sample.","",
         "One seed and one repeat cannot establish cross-seed robustness or isolate thermal/run-order noise. There are no confidence intervals or p95 claims. This is an exploratory ablation, with no predeclared numerical noninferiority threshold. Do not describe approximate feature prediction as lossless speculation.","",
         "## Reproduction", "", "```sh", ".venv/bin/python scripts/evaluate-klein.py --out outputs/evaluation", ".venv-quality/bin/python scripts/score-evaluation.py --out outputs/evaluation --image-reward", ".venv/bin/python scripts/report-evaluation.py --out outputs/evaluation", "```", "",
-        "Environment locks: requirements-mac.txt, requirements-eval.txt, requirements-quality.txt. Raw measurements, scoring metadata, the generation manifest, and all pilot outputs accompany this report.","",
+        "Environment locks: requirements-mac.txt, requirements-eval.txt, requirements-quality.txt. Raw measurements, scoring metadata, the generation manifest, and all pilot outputs accompany this report. Generation and scoring run separately. Hardware telemetry also includes system RAM/swap usage and GPU temperature for diagnosing environmental interference.","",
         "## Visual inspection", ""]
     for pid,prompt in enumerate(identity["prompts"]):
         lines += [f"### Prompt {pid}","",prompt,"",f"![Prompt {pid} ablations](prompt-{pid}.jpg)",""]
+    if energy_pairs:
+        lines += ["## Estimated energy", "", "![Matched energy comparisons](energy.png)", "",
+            "Collector: [macmon](https://github.com/vladkens/macmon). Power uses CPU+GPU watts only. See power.json for samples, timestamps, temperatures, and RAM/swap context.", ""]
+        telemetry=json.loads((args.out / "power.json").read_text())["telemetry"]
+        temperatures=[r["gpu_temp_c"] for r in telemetry if r["gpu_temp_c"] is not None]
+        swaps=[r["memory"]["swap_usage"]/1e9 for r in telemetry]
+        if temperatures:
+            lines += [f"During recorded telemetry, GPU temperature ranged from {min(temperatures):.1f} to {max(temperatures):.1f} °C. System-wide swap in use ranged from {min(swaps):.1f} to {max(swaps):.1f} GB. "
+                "Existing swap is not attributable to the model. This was an active desktop environment, not an isolated machine; background activity, memory pressure, and thermal drift limit causal interpretation of small differences.", ""]
     lines += ["## References", "",
         "- [TaylorSeer](https://openaccess.thecvf.com/content/ICCV2025/papers/Liu_From_Reusing_to_Forecasting_Accelerating_Diffusion_Models_with_TaylorSeers_ICCV_2025_paper.pdf)",
         "- [SpeCa](https://arxiv.org/abs/2509.11628)",

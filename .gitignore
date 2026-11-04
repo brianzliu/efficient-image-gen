@@ -1,5 +1,6 @@
 .venv/
 .venv-quality/
+.tools/
 .cache/
 models/
 outputs/

@@ -54,6 +54,19 @@ Offline scoring reports LPIPS-Alex, SSIM, PSNR, CLIP alignment, and optionally I
 
 Energy is null unless independently recorded telemetry is supplied during scoring with `--power-samples file.json`. The file must contain `scope` and `samples`, where samples are ordered `[Unix timestamp seconds, power watts]` pairs. Integration requires coverage of the recorded generation windows and rejects gaps over two seconds. State the measured components; CPU/GPU estimates are not whole-device energy. No energy is inferred from latency or compute counts. Current sudo authentication prevents collecting `powermetrics` automatically in the agent session.
 
+Non-root CPU+GPU telemetry is available through [macmon](https://github.com/vladkens/macmon). The optional installer pins v0.10.0 and checks the downloaded archive hash. Start the collector in another terminal before generation, then stop it after generation and before scoring:
+
+```sh
+bash scripts/install-macmon.sh
+.venv/bin/python scripts/collect-macmon.py
+# In the generation terminal, after evaluate-klein.py completes:
+touch outputs/evaluation/stop-power
+# Wait for the collector to exit and finalize power.json, then:
+.venv-quality/bin/python scripts/score-evaluation.py --out outputs/evaluation --image-reward --power-samples outputs/evaluation/power.json
+```
+
+The collector samples every 500 ms and positions interval-averaged power at approximate interval midpoints. It records temperature and system RAM/swap usage alongside CPU+GPU watts. Remove an old stop file before starting a new collection. Report energy only on prompt/seed pairs covered for every configuration. Estimates include background activity and exclude other device components; there is no idle subtraction or external-meter calibration.
+
 Our research question is: **Can an adaptive prediction-and-verification algorithm reduce image generation latency on Apple Silicon enough to justify its extra memory and verification cost?**
 
 - Develop and evaluate an acceleration algorithm, rather than only package an existing generator.

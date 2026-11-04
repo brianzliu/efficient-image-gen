@@ -66,7 +66,14 @@ def main():
             metrics["clip_score"] = 100 * max(0, float(torch.nn.functional.cosine_similarity(
                 prediction.image_embeds, prediction.text_embeds).item()))
             metrics["image_reward"] = float(reward.score(r["prompt"], image)) if reward else None
-            metrics["energy_j"] = integrate_energy(power["samples"], r["started_unix"], r["ended_unix"]) if power else None
+            metrics["energy_j"] = None
+            metrics["energy_status"] = "not measured"
+            if power:
+                try:
+                    metrics["energy_j"] = integrate_energy(power["samples"], r["started_unix"], r["ended_unix"])
+                    metrics["energy_status"] = "measured estimated CPU+GPU energy"
+                except ValueError as error:
+                    metrics["energy_status"] = str(error)
             f.write(json.dumps(dict(key=r["key"], **metrics), allow_nan=False)+"\n"); f.flush()
             print(r["key"], metrics, flush=True)
 
