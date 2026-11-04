@@ -25,6 +25,7 @@ class Denoised:
     full_steps: int
     rejected_steps: int
     cache_bytes: int
+    checked_steps: int = 0
 
 
 def load_klein() -> Flux2Klein:
@@ -91,7 +92,7 @@ def denoise(model: Flux2Klein, embeds: tuple[mx.array, ...], seed: int, steps: i
             seconds += perf_counter() - start
 
         cache_bytes = sum(array.nbytes for array in reuse.arrays())
-        return Denoised(latents, seconds, reuse.full_steps, reuse.rejected_steps, cache_bytes)
+        return Denoised(latents, seconds, reuse.full_steps, reuse.rejected_steps, cache_bytes, reuse.checked_steps)
 
 
 def decode(model: Flux2Klein, latents: mx.array):

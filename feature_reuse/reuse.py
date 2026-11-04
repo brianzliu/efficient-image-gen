@@ -53,6 +53,7 @@ class BlockReuse:
         self.factors = {}
         self.stream_in = None
         self.text_tokens = 0
+        self.checked_steps = 0
 
     def begin_step(self, step: int) -> None:
         self.step = step
@@ -75,6 +76,7 @@ class BlockReuse:
         if not self.skip:
             return True
         if self.checking:
+            self.checked_steps += 1
             mx.eval(*self.errors)
             if max(error.item() for error in self.errors) > self.policy.threshold(self.step):
                 self.rejected_steps += 1

@@ -31,6 +31,24 @@ Initial execution check on an M1 Pro with 16 GB unified memory and macOS 27.0.1 
 
 ## Goals and research question
 
+### Evaluating acceleration
+
+The evaluator runs all eight configured ablations at 512 × 512: `full-50`, `full-17`, `fixed-3`, `taylor-3`, `speca-0.1-0.5`, `speca-0.3-0.5`, `speca-0.3-1.0`, and `speca-nocheck`. The last disables verification while retaining adaptive policy warmup and the maximum reuse interval. Fixed and Taylor interval three each use 17 full steps; adaptive methods choose their full-step counts. These are approximate feature-reuse methods, not distribution-preserving speculative sampling.
+
+```sh
+uv pip install --python .venv/bin/python -r requirements-eval.txt
+.venv/bin/python scripts/check-klein-equivalence.py
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python scripts/evaluate-klein.py --out outputs/evaluation
+.venv/bin/python scripts/score-evaluation.py --out outputs/evaluation --image-reward
+```
+
+Generation defaults to all five prompts and seed 42, with one run per pair/configuration. Increase coverage with `--seeds 42 43 44 --repeats 3` in a new output directory. The runner rejects changed experiment identities when resuming. It warms full/prediction/verification paths before measurement and rotates configuration order across prompts. Prompt encoding is performed for each trial with resident model weights. Total latency includes encoding, denoising, and image decoding, excluding model load, PNG writing, and scoring. Full-pipeline peak MLX allocation is separate from process or whole-system memory. Full transformer passes and verification-block passes count both classifier-free guidance branches. Rejected forecasts incur both their check and a subsequent full pass.
+
+Offline scoring reports LPIPS-Alex, SSIM, PSNR, CLIP alignment, and optionally ImageReward. PSNR is null for identical images, with `identical_pixels=true`, to avoid invalid infinite JSON numbers. Similarity uses the matching full-50 output as reference. CLIP uses `openai/clip-vit-base-patch32` with its revision recorded; it is not a compositional correctness test. GenEval and blinded human preference require separate evaluators/raters and are not replaced by CLIP or ImageReward. FID is intentionally omitted for this small prompt suite.
+
+Energy is null unless independently recorded telemetry is supplied during scoring with `--power-samples file.json`. The file must contain `scope` and `samples`, where samples are ordered `[Unix timestamp seconds, power watts]` pairs. Integration requires coverage of the recorded generation windows and rejects gaps over two seconds. State the measured components; CPU/GPU estimates are not whole-device energy. No energy is inferred from latency or compute counts. Current sudo authentication prevents collecting `powermetrics` automatically in the agent session.
+
 Our research question is: **Can an adaptive prediction-and-verification algorithm reduce image generation latency on Apple Silicon enough to justify its extra memory and verification cost?**
 
 - Develop and evaluate an acceleration algorithm, rather than only package an existing generator.
