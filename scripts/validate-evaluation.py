@@ -28,8 +28,14 @@ for r in rows:
     assert r["prompt"]==identity["prompts"][r["prompt_id"]]
     assert abs(r["total_s"]-sum(r[k] for k in ["encode_s","denoise_s","decode_s"]))<1e-6
     assert r["full_steps"]+r["accepted_reuse_steps"]==r["sampling_steps"]
-    assert r["full_transformer_passes"]==2*r["full_steps"]
-    assert r["verification_block_passes"]==2*r["checked_steps"]
+    # Guidance policies can leave the unconditional branch out, so each step has one or two passes.
+    guided = r.get("guided_steps", r["sampling_steps"])
+    if guided == r["sampling_steps"]:
+        assert r["full_transformer_passes"]==2*r["full_steps"]
+        assert r["verification_block_passes"]==2*r["checked_steps"]
+    else:
+        assert r["full_steps"]<=r["full_transformer_passes"]<=2*r["full_steps"]
+        assert r["checked_steps"]<=r["verification_block_passes"]<=2*r["checked_steps"]
     assert r["rejected_steps"]<=r["checked_steps"]
     s=scores[r["key"]]
     assert s["image_sha256"]==hashlib.sha256((root/r["image"]).read_bytes()).hexdigest()

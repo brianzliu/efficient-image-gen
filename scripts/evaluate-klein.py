@@ -41,7 +41,7 @@ def main():
     if not prompts or not args.seeds or args.repeats < 1:
         parser.error("Need prompts, seeds, and positive repeats")
     configs = {c: benchmark.parse_config(c) for c in args.configs}
-    for steps, policy, _ in configs.values():
+    for steps, policy, *_ in configs.values():
         if steps < 1 or (hasattr(policy, "interval") and policy.interval < 1):
             parser.error("Steps and reuse intervals must be positive")
     identity = dict(prompts=prompts, seeds=args.seeds, repeats=args.repeats, configs=args.configs,
@@ -96,8 +96,8 @@ def main():
                     row = dict(key=key, repeat=repeat, prompt_id=pid, prompt=prompt, seed=seed, config=name,
                         total_s=end-start, encode_s=encoded-start, denoise_s=denoised-encoded,
                         decode_s=end-denoised, full_steps=result.full_steps,
-                        full_transformer_passes=2*result.full_steps, checked_steps=result.checked_steps,
-                        verification_block_passes=2*result.checked_steps,
+                        full_transformer_passes=result.full_passes, checked_steps=result.checked_steps,
+                        verification_block_passes=result.verification_passes, guided_steps=result.guided_steps,
                         rejected_steps=result.rejected_steps, sampling_steps=configs[name][0],
                         accepted_reuse_steps=configs[name][0]-result.full_steps,
                         peak_mlx_gb=mx.get_peak_memory()/1e9, cache_mb=result.cache_bytes/1e6,
