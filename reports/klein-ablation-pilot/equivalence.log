@@ -1,0 +1,10 @@
+0%|          | 0/4 [00:00<?, ?it/s]
+ 25%|██▌       | 1/4 [00:08<00:24,  8.24s/it]
+ 50%|█████     | 2/4 [00:15<00:14,  7.39s/it]
+ 75%|███████▌  | 3/4 [00:21<00:06,  7.00s/it]
+100%|██████████| 4/4 [00:28<00:00,  7.04s/it]
+100%|██████████| 4/4 [00:28<00:00,  7.17s/it]
+PASS loop == mflux
+PASS every step full, fixed == mflux
+PASS every step full, forecast == mflux
+PASS SpeCa warmup only == mflux

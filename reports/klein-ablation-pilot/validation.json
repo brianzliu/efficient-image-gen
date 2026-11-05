@@ -1,0 +1,33 @@
+{
+  "generations": 40,
+  "matched_energy_pairs": [
+    [
+      0,
+      2,
+      42
+    ],
+    [
+      0,
+      3,
+      42
+    ],
+    [
+      0,
+      4,
+      42
+    ]
+  ],
+  "matched_energy_images": 24,
+  "status": "passed",
+  "checks": [
+    "complete unique trial keys",
+    "prompt identities",
+    "phase timing sums",
+    "CFG computation counters",
+    "image hashes",
+    "self-reference metrics",
+    "energy reintegration",
+    "paired energy aggregation",
+    "speedup recalculation"
+  ]
+}

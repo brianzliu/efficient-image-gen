@@ -31,6 +31,8 @@ Initial execution check on an M1 Pro with 16 GB unified memory and macOS 27.0.1 
 
 ## Evaluating acceleration
 
+The [Klein ablation pilot report](reports/klein-ablation-pilot/README.md) contains 40 evaluated images across eight configurations, quality/resource plots, raw results, and [findings](reports/klein-ablation-pilot/findings.md). Energy comparisons use 24 images with fully matched telemetry coverage. Alan's earlier three-seed, denoising-only study remains in [results/summary.md](results/summary.md).
+
 The evaluator runs all eight configured ablations at 512 × 512: `full-50`, `full-17`, `fixed-3`, `taylor-3`, `speca-0.1-0.5`, `speca-0.3-0.5`, `speca-0.3-1.0`, and `speca-nocheck`. The last disables verification while retaining adaptive policy warmup and the maximum reuse interval. Fixed and Taylor interval three each use 17 full steps; adaptive methods choose their full-step counts. These are approximate feature-reuse methods, not distribution-preserving speculative sampling.
 
 Taylor reuse here is first-order extrapolation. The adaptive variants are SpeCa-inspired implementations with a final-block heuristic, not validated reproductions of the published methods. Their first predicted step after each full computation is unchecked; subsequent predictions are checked according to the policy.
@@ -66,6 +68,8 @@ touch outputs/evaluation/stop-power
 ```
 
 The collector samples every 500 ms and positions interval-averaged power at approximate interval midpoints. It records temperature and system RAM/swap usage alongside CPU+GPU watts. Remove an old stop file before starting a new collection. Report energy only on prompt/seed pairs covered for every configuration. Estimates include background activity and exclude other device components; there is no idle subtraction or external-meter calibration.
+
+If collection was interrupted before `power.json` was finalized, recover the actual flushed samples with `.venv/bin/python scripts/collect-macmon.py --recover`. Recovery does not fill missing time windows or extrapolate readings.
 
 ## Goals and research question
 

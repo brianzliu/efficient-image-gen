@@ -1,0 +1,25 @@
+{
+  "clip_model": "openai/clip-vit-base-patch32",
+  "clip_revision": "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268",
+  "git_commit": "bcce97e4b54e3d25fb37b8b6a9e30fb697e5b2f7",
+  "source_sha256": "bfc8ce3130e5ff9660ed1482b2d004fdeeb63a08dfe2f00201cb66e2efc660e5",
+  "packages": {
+    "torch": "2.15.0",
+    "torchvision": "0.29.2",
+    "transformers": "4.30.2",
+    "lpips": "0.1.4",
+    "scikit-image": "0.26.0",
+    "image-reward": "1.5",
+    "numpy": "2.4.6"
+  },
+  "ssim": "skimage structural_similarity, default uniform 7x7 window, RGB channel mean, data_range=255",
+  "psnr": "10*log10(255^2/MSE), RGB uint8; null for zero MSE with identical_pixels=true",
+  "clip_definition": "100 * max(0, cosine(image,text)); CLIP truncates text at 77 tokens",
+  "lpips": "alex, v0.1, RGB [-1,1], original resolution",
+  "image_reward": "ImageReward-v1.0",
+  "image_reward_revision": "5736be03b2652728fb87788c9797b0570450ab72",
+  "energy_scope": "macmon v0.10.0 estimated system CPU+GPU power; background included; excludes other components; no idle subtraction",
+  "geneval": null,
+  "human_preference": null,
+  "measurements_sha256": "5f18039e9705516b41731a0b289a59f39421f05ece4466358d63e7c2501d176d"
+}

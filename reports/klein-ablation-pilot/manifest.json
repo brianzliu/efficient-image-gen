@@ -1,0 +1,43 @@
+{
+  "identity": {
+    "prompts": [
+      "A red fox sitting beside a blue ceramic mug on a wooden table, soft morning light through a window, detailed fur, realistic photography, no text.",
+      "Three stacked books on a desk: a green book on the bottom, a yellow book in the middle, and a red book on top, with a small potted cactus to the left of the stack, studio lighting.",
+      "A vintage wooden shop sign that reads \"OPEN DAILY\" in bold white letters, mounted on a brick wall, daylight, sharp focus.",
+      "A crowded night market seen from above, dozens of people between glowing food stalls, strings of lanterns, wet pavement reflections, highly detailed.",
+      "A close-up of two hands tying a red ribbon around a small gift box, natural window light, shallow depth of field."
+    ],
+    "seeds": [
+      42
+    ],
+    "repeats": 1,
+    "configs": [
+      "full-50",
+      "full-17",
+      "fixed-3",
+      "taylor-3",
+      "speca-0.1-0.5",
+      "speca-0.3-0.5",
+      "speca-0.3-1.0",
+      "speca-nocheck"
+    ],
+    "size": 512,
+    "guidance": 3.5,
+    "scheduler": "flow_match_euler_discrete",
+    "source_sha256": "0b54b822cfe8d9bc2f91ad88a885894f40f4935534033501520aca977dd7d2d2",
+    "checkpoint": "mflux-community/flux-2-klein-base-4b-mflux-q4",
+    "checkpoint_revision": "f69aa0b43285d0db24695ba68faabbdb1a0ad016",
+    "packages": {
+      "mlx": "0.32.4",
+      "mflux": "0.24.0",
+      "numpy": "2.5.4"
+    },
+    "macos": "27.0.1",
+    "machine": "arm64"
+  },
+  "started_at": 1793798040.182962,
+  "git_commit": "356654fc6eaceae59040230537d8573bfbc064e2",
+  "hardware": "Apple M1 Pro",
+  "energy_status": "not measured: sudo powermetrics requires authentication",
+  "timing_scope": "resident weights; prompt encoding + denoising + decode; PNG writing excluded"
+}

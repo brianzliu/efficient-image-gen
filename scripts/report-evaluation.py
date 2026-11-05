@@ -3,9 +3,13 @@ import argparse
 import csv
 import json
 import shutil
+import os
 from collections import defaultdict
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("MPLCONFIGDIR", str(ROOT / ".cache/matplotlib"))
+os.environ.setdefault("XDG_CACHE_HOME", str(ROOT / ".cache"))
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -34,7 +38,7 @@ def main():
     for row in rows:
         shutil.copyfile(args.out / row["image"], args.report / row["image"])
     with (args.report / "results.csv").open("w") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0])); writer.writeheader(); writer.writerows(rows)
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]), lineterminator="\n"); writer.writeheader(); writer.writerows(rows)
     groups = defaultdict(list)
     for row in rows:
         groups[row["config"]].append(row)
@@ -61,17 +65,20 @@ def main():
     (args.report / "summary.json").write_text(json.dumps(summaries,indent=2,allow_nan=False))
     plt.rcParams.update({"font.size":10, "axes.spines.top":False,"axes.spines.right":False})
     fig, axes = plt.subplots(1,2,figsize=(13,5))
-    for s in summaries:
-        axes[0].scatter(s["total_s"],s["lpips"],s=40)
-        axes[0].annotate(s["config"],(s["total_s"],s["lpips"]),fontsize=8,xytext=(4,4),textcoords="offset points")
-        axes[1].scatter(s["total_s"],s["image_reward"] if s["image_reward"] is not None else s["clip_score"],s=40)
-        axes[1].annotate(s["config"],(s["total_s"],s["image_reward"] if s["image_reward"] is not None else s["clip_score"]),fontsize=8,xytext=(4,4),textcoords="offset points")
+    for i,s in enumerate(summaries):
+        offset=(-10,9) if i==6 else (5,-12) if i==5 else (5,5)
+        axes[0].scatter(s["total_s"],s["lpips"],s=40,color="tab:blue")
+        axes[0].annotate(str(i+1),(s["total_s"],s["lpips"]),fontsize=10,xytext=offset,textcoords="offset points")
+        axes[1].scatter(s["total_s"],s["image_reward"] if s["image_reward"] is not None else s["clip_score"],s=40,color="tab:blue")
+        axes[1].annotate(str(i+1),(s["total_s"],s["image_reward"] if s["image_reward"] is not None else s["clip_score"]),fontsize=10,xytext=offset,textcoords="offset points")
     axes[0].set(xlabel="Mean warm generation latency (seconds/image)",ylabel="Mean LPIPS to full-50 (lower is closer)",title="Reference fidelity versus latency")
     reward_available = summaries[0]["image_reward"] is not None
     axes[1].set(xlabel="Mean warm generation latency (seconds/image)",ylabel="Mean ImageReward" if reward_available else "Mean CLIP alignment score",title="Automated quality versus latency")
     fig.suptitle(f"Klein Base 4B Q4 · {manifest['hardware']} · {identity['size']} × {identity['size']}")
+    fig.text(.04,.085,"    ".join(f"{i+1}: {name}" for i,name in enumerate(names[:4])),fontsize=10)
+    fig.text(.04,.05,"    ".join(f"{i+5}: {name}" for i,name in enumerate(names[4:])),fontsize=10)
     fig.text(.01,.01,"Source: accompanying raw pilot results. Points average matched prompts/seeds; no confidence intervals implied.",fontsize=8)
-    fig.tight_layout(rect=[0,.04,1,.95]); fig.savefig(args.report / "tradeoffs.png",dpi=160); plt.close(fig)
+    fig.tight_layout(rect=[0,.13,1,.95]); fig.savefig(args.report / "tradeoffs.png",dpi=160); plt.close(fig)
     fig, axes = plt.subplots(1,2,figsize=(13,5))
     axes[0].barh(names,[s["total_s"] for s in summaries]); axes[0].set(xlabel="Mean seconds/image",title="Warm generation latency")
     axes[1].barh(names,[s["peak_mlx_gb"] for s in summaries]); axes[1].set(xlabel="Mean per-trial peak MLX allocation (GB, decimal)",title="Full generation window allocation")
@@ -92,7 +99,8 @@ def main():
             row=next(r for r in rows if r["prompt_id"]==pid and r["config"]==name)
             ax.imshow(Image.open(args.out / row["image"])); ax.axis("off"); ax.set_title(name)
         fig.suptitle(identity["prompts"][pid],fontsize=10,wrap=True)
-        fig.tight_layout(rect=[0,0,1,.94]); fig.savefig(args.report / f"prompt-{pid}.jpg",dpi=120); plt.close(fig)
+        fig.tight_layout(rect=[0,0,1,.94]); fig.subplots_adjust(hspace=.2)
+        fig.savefig(args.report / f"prompt-{pid}.jpg",dpi=120); plt.close(fig)
     lines=["# Klein Base 4B feature-reuse ablation pilot", "",
            "This report records one local pilot, not a final quality or energy-efficiency claim.","",
            "## Setup", "",
@@ -110,7 +118,7 @@ def main():
     for s in summaries:
         lines.append("| "+" | ".join([s["config"],str(s["n"])]+[fmt(s[k]) for k in ["total_s","speedup","full_steps","checked_steps","rejected_steps","peak_mlx_gb","cache_mb","lpips","ssim","clip_score","image_reward","energy_j"]]+[str(s["energy_n"])])+" |")
     lines += ["", "![Quality and latency](tradeoffs.png)","", "![Resource measurements](resources.png)","",
-        "All values in the table are arithmetic means over the same prompt/seed pairs. Speedup is the ratio of mean full-50 time to mean configuration time. Individual results and latency ranges are in results.csv and summary.json.","",
+        "Latency and quality values are arithmetic means over all five prompt/seed pairs. Energy means use only the common covered subset, whose size is listed in Energy n. Speedup is the ratio of mean full-50 time to mean configuration time. Individual results and latency ranges are in results.csv and summary.json.","",
         "## Scope and limitations", "",
         "Total latency covers prompt encoding, denoising, and decoding with resident weights and GPU synchronization. It excludes model loading, PNG writing, and offline scoring. The runner warms the full, forecast, and verification paths. MLX peak memory covers the generation window and includes resident weights; it is not total process footprint or whole-device memory. Persistent prompt-independent weights stay loaded across trials.","",
         (f"Energy is estimated from macmon v0.10.0 CPU+GPU telemetry on the common subset of {len(energy_pairs)} prompt/seed pairs with complete coverage for every configuration. Earlier images without telemetry are excluded from ALL energy averages. Samples are 500 ms interval averages, positioned approximately at interval midpoints and integrated with linear interpolation. Gaps over two seconds are rejected. These are system component estimates including background activity, not process-isolated, wall-socket, or whole-device energy. No idle subtraction or external-meter calibration was performed. The manifest's initial powermetrics-unavailable status predates this alternative collector; scoring.json records the actual energy scope." if energy_pairs else "Energy is unmeasured; no energy savings can be inferred from latency."),"",
@@ -125,11 +133,12 @@ def main():
     if energy_pairs:
         lines += ["## Estimated energy", "", "![Matched energy comparisons](energy.png)", "",
             "Collector: [macmon](https://github.com/vladkens/macmon). Power uses CPU+GPU watts only. See power.json for samples, timestamps, temperatures, and RAM/swap context.", ""]
-        telemetry=json.loads((args.out / "power.json").read_text())["telemetry"]
+        telemetry=[p for p in json.loads((args.out / "power.json").read_text())["telemetry"]
+                   if min(r["started_unix"] for r in rows)<=p["unix_s"]<=max(r["ended_unix"] for r in rows)]
         temperatures=[r["gpu_temp_c"] for r in telemetry if r["gpu_temp_c"] is not None]
         swaps=[r["memory"]["swap_usage"]/1e9 for r in telemetry]
         if temperatures:
-            lines += [f"During recorded telemetry, GPU temperature ranged from {min(temperatures):.1f} to {max(temperatures):.1f} °C. System-wide swap in use ranged from {min(swaps):.1f} to {max(swaps):.1f} GB. "
+            lines += [f"During the generation-covered portion of recorded telemetry, GPU temperature ranged from {min(temperatures):.1f} to {max(temperatures):.1f} °C. System-wide swap in use ranged from {min(swaps):.1f} to {max(swaps):.1f} GB. "
                 "Existing swap is not attributable to the model. This was an active desktop environment, not an isolated machine; background activity, memory pressure, and thermal drift limit causal interpretation of small differences.", ""]
     lines += ["## References", "",
         "- [TaylorSeer](https://openaccess.thecvf.com/content/ICCV2025/papers/Liu_From_Reusing_to_Forecasting_Accelerating_Diffusion_Models_with_TaylorSeers_ICCV_2025_paper.pdf)",
@@ -139,6 +148,8 @@ def main():
         "- [ImageReward](https://arxiv.org/abs/2304.05977)",
         "- [GenEval](https://arxiv.org/abs/2310.11513)",
         "- [ML.ENERGY](https://arxiv.org/abs/2505.06371)", ""]
+    if (args.report / "findings.md").exists():
+        lines[4:4]=["Read [findings and next steps](findings.md) for interpretation. Independent calculation checks are in [validation.json](validation.json).", ""]
     (args.report / "README.md").write_text("\n".join(lines))
     print(json.dumps(summaries,indent=2))
 

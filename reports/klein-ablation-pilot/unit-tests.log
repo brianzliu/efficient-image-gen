@@ -1,0 +1,19 @@
+test_energy_interpolates_window_boundaries (test_metrics.MetricsTest.test_energy_interpolates_window_boundaries) ... ok
+test_energy_refuses_duplicate_time (test_metrics.MetricsTest.test_energy_refuses_duplicate_time) ... ok
+test_energy_refuses_extrapolation_and_gaps (test_metrics.MetricsTest.test_energy_refuses_extrapolation_and_gaps) ... ok
+test_identity_and_known_pixel_error (test_metrics.MetricsTest.test_identity_and_known_pixel_error) ... ok
+test_mismatched_sizes_fail (test_metrics.MetricsTest.test_mismatched_sizes_fail) ... ok
+test_blocks_are_restored (test_reuse.FixedIntervalTest.test_blocks_are_restored) ... ok
+test_branches_keep_separate_residuals (test_reuse.FixedIntervalTest.test_branches_keep_separate_residuals) ... ok
+test_forecast_extrapolates_linearly (test_reuse.FixedIntervalTest.test_forecast_extrapolates_linearly) ... ok
+test_reused_step_adds_stored_residual (test_reuse.FixedIntervalTest.test_reused_step_adds_stored_residual) ... ok
+test_accurate_predictions_run_until_the_limit (test_reuse.SpeCaTest.test_accurate_predictions_run_until_the_limit) ... ok
+test_error_ignores_text_tokens (test_reuse.SpeCaTest.test_error_ignores_text_tokens) ... ok
+test_failed_check_reruns_with_every_block (test_reuse.SpeCaTest.test_failed_check_reruns_with_every_block) ... ok
+test_threshold_decays (test_reuse.SpeCaTest.test_threshold_decays) ... ok
+test_worst_branch_decides (test_reuse.SpeCaTest.test_worst_branch_decides) ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.042s
+
+OK
