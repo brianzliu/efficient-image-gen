@@ -11,6 +11,7 @@ from mflux.models.flux2.variants import Flux2Klein
 from mflux.utils.image_util import ImageUtil
 
 from feature_reuse.reuse import reuse_blocks
+from feature_reuse.samplers import make_sampler
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "klein-base-4b-q4"
 SCHEDULER = "flow_match_euler_discrete"
@@ -46,7 +47,9 @@ def encode_prompt(model: Flux2Klein, prompt: str) -> tuple[mx.array, ...]:
     return embeds
 
 
-def denoise(model: Flux2Klein, embeds: tuple[mx.array, ...], seed: int, steps: int, policy=None) -> Denoised:
+def denoise(
+    model: Flux2Klein, embeds: tuple[mx.array, ...], seed: int, steps: int, policy=None, sampler: str = "euler"
+) -> Denoised:
     prompt, text_ids, negative_prompt, negative_text_ids = embeds
     config = Config(
         model_config=model.model_config,
@@ -57,6 +60,7 @@ def denoise(model: Flux2Klein, embeds: tuple[mx.array, ...], seed: int, steps: i
         scheduler=SCHEDULER,
     )
     scheduler = config.scheduler
+    solver = make_sampler(sampler, scheduler.sigmas)
     latents, latent_ids, _, _ = Flux2LatentCreator.prepare_packed_latents(
         seed=seed, height=SIZE, width=SIZE, batch_size=1
     )
@@ -87,7 +91,7 @@ def denoise(model: Flux2Klein, embeds: tuple[mx.array, ...], seed: int, steps: i
             noise = predict()
             if not reuse.confirm_step():
                 noise = predict()
-            latents = scheduler.step(noise=noise, timestep=step, latents=latents, sigmas=scheduler.sigmas)
+            latents = solver.step(noise, step, latents)
             mx.eval(latents, *reuse.arrays())
             seconds += perf_counter() - start
 
