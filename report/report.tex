@@ -22,8 +22,7 @@
 
 
 \begin{abstract}
-    \textcolor{LightGrey}{
-    }
+    Diffusion models can generate high quality images from text prompts, but running them on personal devices can be difficult because of their substantial memory and computational demands. Even when a model fits, generating each image can take a long time. These delays add up as users refine their prompts. In this project, we aim to speed up image generation on Apple Silicon while preserving image quality and staying within its memory budget. [sentence abt our preliminary experiments]. [sentence abt hwo we evaluated it]. [maybe one finding]. [next steps]
 \end{abstract}
 
 \begin{center}
@@ -35,31 +34,47 @@ Code: \url{https://github.com/brianzliu/efficient-image-gen}
 
 
 \section{Introduction}
+\label{sec:intro}
 
 Image generation often revolves around repeatedly adjusting a prompt and checking the output until the image matches what the user has in mind. Diffusion models can generate high quality images from these prompts by gradually transforming random noise into an image, relying on the prompt to guide each denoising step \citep{rombach2021highresolution}. Cloud services can provide the hardware for users to run these models, but running them locally allows users to experiment on devices they already own. However, the substantial computational and memory demands of large diffusion models can make running them on personal devices impractical \citep{zhao2024mobilediffusioninstanttexttoimagegeneration}.
 Even when a model fits in memory, generating each image can also take a considerable amount of time \citep{li2025svdquantabsorbingoutlierslowrank}, and this extra time adds up as users refine their prompts. In this project, we aim to develop and evaluate an algorithm that speeds up image generation on Apple Silicon while preserving image quality and staying within its memory budget.
 
 \subsection{Related Work}
+\label{sec:related}
 
 \textbf{Diffusion and flow matching}
-\citep{ho2020denoisingdiffusionprobabilisticmodels}
-\citep{rombach2021highresolution}
-\citep{liu2023iclr-flow}
+Diffusion models learn to generate images by removing noise added to training images, and then applying this to generate new images from random noise
+\citep{ho2020denoisingdiffusionprobabilisticmodels}.
+Latent diffusion takes this a step further by doing the denoising process in a compact representation of the image, which reduces computational cost
+\citep{rombach2021highresolution}. Even with this optimization, generating a high quality image can still take many denoising steps. Flow matching can help address this by learning a velocity field along straighter paths between the noise and the image \citep{lipman2023flowmatchinggenerativemodeling}. Similarly, rectified flow uses a procedure known as reflow to straighten the learned trajectories \citep{liu2023iclr-flow}.
 
-\textbf{Model compression}
-\citep{li2025svdquantabsorbingoutlierslowrank}
-\citep{zhao2024mobilediffusioninstanttexttoimagegeneration}
+\textbf{Efficient generation on devices}
+Quantization relies on using fewer bits to represent model weights and activations, which can reduce memory and computation \citep{jacob2017quantizationtrainingneuralnetworks}. It works by mapping the original values to a smaller set of discrete values, which can introduce rounding errors.
+However, outliers pose a challenge to quantization because having even a few extreme values can widen the range covered by these discrete values, which leaves less precision for the other values \citep{li2025svdquantabsorbingoutlierslowrank}.
+SVDQuant addresses this problem by using a high-precision, low-rank component to handle the outliers, which allows the rest of the weights and activations in the linear layers to be represented with only 4 bits \citep{li2025svdquantabsorbingoutlierslowrank}. Another approach is MobileDiffusion, which targets image generation on mobile devices by moving transformer layers to lower resolutions where there are fewer image tokens to process. It also takes out self-attention at higher resolutions and uses adversarial fine-tuning to generate images in a single step
+\citep{zhao2024mobilediffusioninstanttexttoimagegeneration}.
 
 \textbf{Feature caching and prediction}
-\citep{Liu_2025_ICCV}
-\citep{Liu_2025}
+Diffusion transformers have to run expensive forward passes at each sampling step, even though some features only change slightly between steps \citep{selvaraju2024forafastforwardcachingdiffusion}. Feature caching, which works by saving these intermediate features and reusing them at later steps, can avoid repeating parts of this expensive computation. However, reusing the same features can become less accurate as they change from step to step. TaylorSeer addresses this by using a Taylor expansion to predict how features may change based on their values at previous steps \citep{Liu_2025_ICCV}. Building on this, SpeCa uses TaylorSeer to predict features and adds an error check to decide when forecasted features can be used and when they need to be recomputed through a complete forward pass
+\citep{Liu_2025}.  Errors for predicted features can  affect image quality. For SpeCa specifically, using stricter verification checks can reduce these errors but requires more complete forward passes, which limits the speedup.
 
-\textbf{Speculative generation}
-\citep{chen2026dflashblockdiffusionflash}
-\citep{debortoli2025accelerateddiffusionmodelsspeculative}
-\citep{teng2025acceleratingautoregressivetexttoimagegeneration}
+\textbf{Speculative techniques} Speculative techniques can speed up generation by cheaply predicting a few steps ahead, and then using the target model to verify these predictions \citep{pmlr-v202-leviathan23a}. DFlash is one such example, using a diffusion model to predict several tokens at once, which is then verified by an autoregressive language model \citep{chen2026dflashblockdiffusionflash}. Similar ideas have also been applied to image generation. For autoregressive image models, speculative Jacobi decoding predicts multiple image tokens at once using the  target model through Jacobi updates, and then verifies these predictions with the same model \citep{teng2025acceleratingautoregressivetexttoimagegeneration}. Speculative sampling has also been explored for diffusion models, which is based on using less expensive computations to propose a few sampling steps ahead and checking them with the target model
+\citep{debortoli2025accelerateddiffusionmodelsspeculative}.
+
 
 \subsection{Data}
+Our preliminary experiments use a small set of five text prompts, listed below:
+
+\begin{enumerate}
+    \item A red fox sitting beside a blue ceramic mug on a wooden table, soft morning light through a window, detailed fur, realistic photography, no text.
+    \item Three stacked books on a desk: a green book on the bottom, a yellow book in the middle, and a red book on top, with a small potted cactus to the left of the stack, studio lighting.
+    \item A crowded night market seen from above, dozens of people between glowing food stalls, strings of lanterns, wet pavement reflections, highly detailed.
+    \item A vintage wooden shop sign that reads "OPEN DAILY" in bold white letters, mounted on a brick wall, daylight, sharp focus.
+    \item A close-up of two hands tying a red ribbon around a small gift box, natural window light, shallow depth of field.
+\end{enumerate}
+
+These prompts are being used to benchmark some of the acceleration techniques listed in Section~\ref{sec:related}, adapted to Apple Silicon. Eventually, we plan to expand this set of prompts to compare performance across a larger variety of scenes and types of prompts.
+
 
 
 \section{Methods}

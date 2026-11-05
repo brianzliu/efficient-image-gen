@@ -159,3 +159,48 @@ URL = {https://github.com/apple/ml-stable-diffusion}
       primaryClass={cs.CV},
       url={https://arxiv.org/abs/2311.16567}, 
 }
+@misc{lipman2023flowmatchinggenerativemodeling,
+      title={Flow Matching for Generative Modeling}, 
+      author={Yaron Lipman and Ricky T. Q. Chen and Heli Ben-Hamu and Maximilian Nickel and Matt Le},
+      year={2023},
+      eprint={2210.02747},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2210.02747}, 
+}
+
+@misc{jacob2017quantizationtrainingneuralnetworks,
+      title={Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only Inference}, 
+      author={Benoit Jacob and Skirmantas Kligys and Bo Chen and Menglong Zhu and Matthew Tang and Andrew Howard and Hartwig Adam and Dmitry Kalenichenko},
+      year={2017},
+      eprint={1712.05877},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/1712.05877}, 
+}
+
+@misc{selvaraju2024forafastforwardcachingdiffusion,
+      title={FORA: Fast-Forward Caching in Diffusion Transformer Acceleration}, 
+      author={Pratheba Selvaraju and Tianyu Ding and Tianyi Chen and Ilya Zharkov and Luming Liang},
+      year={2024},
+      eprint={2407.01425},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2407.01425}, 
+}
+
+@InProceedings{pmlr-v202-leviathan23a,
+  title = 	 {Fast Inference from Transformers via Speculative Decoding},
+  author =       {Leviathan, Yaniv and Kalman, Matan and Matias, Yossi},
+  booktitle = 	 {Proceedings of the 40th International Conference on Machine Learning},
+  pages = 	 {19274--19286},
+  year = 	 {2023},
+  editor = 	 {Krause, Andreas and Brunskill, Emma and Cho, Kyunghyun and Engelhardt, Barbara and Sabato, Sivan and Scarlett, Jonathan},
+  volume = 	 {202},
+  series = 	 {Proceedings of Machine Learning Research},
+  month = 	 {23--29 Jul},
+  publisher =    {PMLR},
+  pdf = 	 {https://proceedings.mlr.press/v202/leviathan23a/leviathan23a.pdf},
+  url = 	 {https://proceedings.mlr.press/v202/leviathan23a.html},
+  abstract = 	 {Inference from large autoregressive models like Transformers is slow - decoding K tokens takes K serial runs of the model. In this work we introduce speculative decoding - an algorithm to sample from autoregressive models faster without any changes to the outputs, by computing several tokens in parallel. At the heart of our approach lie the observations that (1) hard language-modeling tasks often include easier subtasks that can be approximated well by more efficient models, and (2) using speculative execution and a novel sampling method, we can make exact decoding from the large models faster, by running them in parallel on the outputs of the approximation models, potentially generating several tokens concurrently, and without changing the distribution. Our method can accelerate existing off-the-shelf models without retraining or architecture changes. We demonstrate it on T5-XXL and show a 2X-3X acceleration compared to the standard T5X implementation, with identical outputs.}
+}
