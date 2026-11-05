@@ -38,7 +38,7 @@ These single runs confirm execution, not a comparative performance or quality re
 
 The [Klein ablation pilot report](reports/klein-ablation-pilot/README.md) contains 40 evaluated images across eight configurations, quality/resource plots, raw results, and [findings](reports/klein-ablation-pilot/findings.md). Energy comparisons use 24 images with fully matched telemetry coverage. Alan's earlier three-seed, denoising-only study remains in [results/summary.md](results/summary.md).
 
-The evaluator runs all eight configured ablations at 512 × 512: `full-50`, `full-17`, `fixed-3`, `taylor-3`, `speca-0.1-0.5`, `speca-0.3-0.5`, `speca-0.3-1.0`, and `speca-nocheck`. The last disables verification while retaining adaptive policy warmup and the maximum reuse interval. Fixed and Taylor interval three each use 17 full steps; adaptive methods choose their full-step counts. These are approximate feature-reuse methods, not distribution-preserving speculative sampling.
+The evaluator runs all eight configured ablations at 512 × 512: `full-50`, `full-17`, `fixed-3`, `taylor-3`, `speca-0.1-0.5`, `speca-0.3-0.5`, `speca-0.3-1.0`, and `speca-nocheck`. The last disables verification while retaining adaptive policy warmup and the maximum reuse interval. Fixed and Taylor interval three each use 17 full steps; adaptive methods choose their full-step counts. These are approximate feature-reuse methods, not distribution-preserving speculative sampling. Pass `--configs` to choose other configurations, including the sampler and guidance variants described in [Samplers and guidance](#samplers-and-guidance).
 
 Taylor reuse here is first-order extrapolation. The adaptive variants are SpeCa-inspired implementations with a final-block heuristic, not validated reproductions of the published methods. Their first predicted step after each full computation is unchecked; subsequent predictions are checked according to the policy.
 
@@ -75,6 +75,48 @@ touch outputs/evaluation/stop-power
 The collector samples every 500 ms and positions interval-averaged power at approximate interval midpoints. It records temperature and system RAM/swap usage alongside CPU+GPU watts. Remove an old stop file before starting a new collection. Report energy only on prompt/seed pairs covered for every configuration. Estimates include background activity and exclude other device components; there is no idle subtraction or external-meter calibration.
 
 If collection was interrupted before `power.json` was finalized, recover the actual flushed samples with `.venv/bin/python scripts/collect-macmon.py --recover`. Recovery does not fill missing time windows or extrapolate readings.
+
+## Samplers and guidance
+
+Any configuration name can take `+` suffixes in any order: at most one sampler and at most one guidance policy. Examples are `full-17+unipc`, `taylor-3+dpmpp2m`, `full-50+ag-0.995`, and `taylor-3+unipc+interval-1-0.918`. Without suffixes, a configuration uses Euler with plain CFG, which matches the pilot.
+
+| Sampler | Suffix | Notes |
+|---|---|---|
+| Euler | `euler` (default) | Bit-identical to MFLUX's own `flow_match_euler_discrete` step. |
+| DPM-Solver++ 2M | `dpmpp2m` | Second-order multistep in log-SNR, written for flow matching. The first, last, and σ = 1 steps fall back to Euler. |
+| UniPC (bh2, order 2) | `unipc` | DPM-Solver++ 2M predictor plus a UniC corrector that reuses the current model evaluation, so it adds no transformer passes. |
+
+Both higher-order samplers match diffusers 0.42.1 (`DPMSolverMultistepScheduler` and `UniPCMultistepScheduler` with flow-matching sigmas) to about 1e-7 on test trajectories. Each sampler uses one model evaluation per step, so it combines with feature reuse without changing `BlockReuse`. Klein's 17-step schedule ends with a large jump from σ ≈ 0.30 to 0, which limits how much a higher-order sampler can gain on the final step.
+
+| Guidance | Suffix | Unconditional branch runs when |
+|---|---|---|
+| Always on | `cfg` (default) | Every step. |
+| Limited interval ([Kynkäänniemi et al., 2024](https://arxiv.org/abs/2404.07724)) | `interval-HIGH-LOW` | `LOW < σ ≤ HIGH`, so `interval-1-0` is plain CFG. |
+| Adaptive switch-off ([Castillo et al., 2023](https://arxiv.org/abs/2312.12487)) | `ag-T` | Until the first step where cos(cond, uncond) ≥ T. That step still uses CFG, and guidance stays off afterward. `ag-inf` never switches off. |
+
+On a step without the unconditional branch, the velocity is the conditional prediction alone. Feature reuse keeps forecast history separately for each branch, so a branch that skips steps extrapolates over its own gaps. A reuse step runs in full when a requested branch has no cached features yet. Guidance policies keep the step count unchanged, so compare their cost with `full_transformer_passes` and `guided_steps` in `measurements.jsonl` rather than full steps. A 50-step plain-CFG run makes 100 passes.
+
+`check-klein-equivalence.py` verifies on the real model that the Euler loop and all-full reuse match MFLUX, that `interval-1-0` and `ag-inf` match plain CFG under every sampler, and that the expected pass counts hold when reuse and guidance are combined.
+
+### Choosing guidance thresholds
+
+The switch-off threshold is chosen from plain CFG diagnostics before any quality scoring. Each diagnostic records the per-step cosine similarity, guidance magnitude, and step-to-step change of cond − uncond, then saves a JSON log, the image, and a plot under `outputs/guidance-diagnostic/`. A 50-step diagnostic takes about four minutes on an M2 Pro.
+
+```sh
+for p in 0 1 2 3 4; do for s in 42 43; do
+  .venv/bin/python scripts/diagnose-guidance.py --prompt-id $p --seed $s
+done; done
+.venv/bin/python scripts/summarize-guidance.py --thresholds 0.99 0.995 0.998
+```
+
+For each threshold, the summary replays the switch-off rule on every diagnostic. It reports guided steps, passes saved, and later dips below the threshold, plus a matched fixed cutoff `interval-1-LOW` that guides the median number of steps on every image. Evaluating each `ag-T` beside its matched cutoff compares adaptive and fixed guidance at about the same average cost:
+
+```sh
+.venv/bin/python scripts/evaluate-klein.py --out outputs/exp-guidance \
+  --configs full-50 full-50+ag-0.995 full-50+interval-1-0.918 full-50+ag-0.998 full-50+interval-1-0.840
+```
+
+The cutoffs above come from five prompts and seeds 42 and 43 at 50 Euler steps. Rerun the diagnostics after changing the prompts, step count, sampler, or guidance scale. `report-evaluation.py` was written for the pilot: its README text describes the pilot configurations, and its tables and plots do not yet show pass counts or guided steps.
 
 ## Goals and research question
 
