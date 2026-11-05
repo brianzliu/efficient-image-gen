@@ -74,6 +74,36 @@ class FixedIntervalTest(unittest.TestCase):
             run_step(transformer, reuse, 2, image=2.0)
             self.assertTrue(mx.array_equal(run_step(transformer, reuse, 3, image=0.0), tokens(23.5)).item())
 
+    def test_second_order_forecast_is_exact_for_quadratic(self) -> None:
+        # Inputs x = t^2 make the body residual 5x + 1 quadratic in the step t.
+        outputs = {}
+        for order in (1, 2):
+            transformer = Transformer()
+            with reuse_blocks(transformer, FixedInterval(3, forecast=True, order=order)) as reuse:
+                for step in (0, 3, 6):
+                    run_step(transformer, reuse, step, image=float(step**2))
+                outputs[order] = run_step(transformer, reuse, 8, image=64.0)
+            self.assertEqual(len(reuse.arrays()), 2 * (order + 1))
+        # Fully computing step 8 would give 6 * 64 + 11 = 395.
+        self.assertTrue(mx.array_equal(outputs[2], tokens(395.0)).item())
+        self.assertTrue(mx.array_equal(outputs[1], tokens(345.0)).item())
+
+    def test_second_order_forecast_handles_uneven_spacing(self) -> None:
+        class Steps:
+            forecast, order = True, 2
+
+            def runs_blocks(self, step: int, predicted: int) -> bool:
+                return step in (0, 2, 6)
+
+            def checks(self, predicted: int) -> bool:
+                return False
+
+        transformer = Transformer()
+        with reuse_blocks(transformer, Steps()) as reuse:
+            for step in (0, 2, 6):
+                run_step(transformer, reuse, step, image=float(step**2))
+            self.assertTrue(mx.array_equal(run_step(transformer, reuse, 7, image=49.0), tokens(305.0)).item())
+
     def test_blocks_are_restored(self) -> None:
         transformer = Transformer()
         single_blocks = transformer.single_transformer_blocks

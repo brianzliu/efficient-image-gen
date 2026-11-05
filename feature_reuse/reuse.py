@@ -8,6 +8,7 @@ import mlx.core as mx
 class FixedInterval:
     interval: int
     forecast: bool = False
+    order: int = 1
 
     def runs_blocks(self, step: int, predicted: int) -> bool:
         return step % self.interval == 0
@@ -25,6 +26,7 @@ class SpeCa:
     # The reference code uses 2, which leaves little room to adapt near 17 full steps.
     min_predicted: int = 1
     max_predicted: int = 8
+    order: int = 1
     forecast = True
 
     def runs_blocks(self, step: int, predicted: int) -> bool:
@@ -46,11 +48,11 @@ class BlockReuse:
         self.checking = False
         self.predicted = 0
         self.last_full_step = 0
-        self.full_spacing = 0
         self.full_steps = 0
         self.rejected_steps = 0
         self.errors = []
         self.factors = {}
+        self.knots = {}
         self.stream_in = None
         self.text_tokens = 0
         self.checked_steps = 0
@@ -69,7 +71,6 @@ class BlockReuse:
         self.checking = False
         self.predicted = 0
         self.full_steps += 1
-        self.full_spacing = self.step - self.last_full_step
         self.last_full_step = self.step
 
     def confirm_step(self) -> bool:
@@ -86,17 +87,24 @@ class BlockReuse:
         return True
 
     def store(self, segment: str, residual: mx.array) -> None:
+        # Newton divided differences over the most recent full steps, newest first.
+        # They stay exact for polynomials up to the policy order even when spacing is uneven.
         key = (self.branch, segment)
-        factors = [residual]
+        factors, knots = [residual], [self.step]
         if self.policy.forecast and key in self.factors:
-            factors.append((residual - self.factors[key][0]) / self.full_spacing)
-        self.factors[key] = factors
+            old_factors, old_knots = self.factors[key], self.knots[key]
+            for i in range(min(self.policy.order, len(old_factors))):
+                factors.append((factors[i] - old_factors[i]) / (self.step - old_knots[i]))
+                knots.append(old_knots[i])
+        self.factors[key], self.knots[key] = factors, knots
 
     def predict(self, segment: str) -> mx.array:
-        factors = self.factors[(self.branch, segment)]
-        if len(factors) == 1:
-            return factors[0]
-        return factors[0] + (self.step - self.last_full_step) * factors[1]
+        key = (self.branch, segment)
+        prediction, weight = self.factors[key][0], 1
+        for factor, knot in zip(self.factors[key][1:], self.knots[key]):
+            weight *= self.step - knot
+            prediction = prediction + weight * factor
+        return prediction
 
     def record_error(self, predicted: mx.array, actual: mx.array) -> None:
         # Text tokens never reach the output, and their large values would dominate.

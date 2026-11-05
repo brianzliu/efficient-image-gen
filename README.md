@@ -42,6 +42,8 @@ The evaluator runs all eight configured ablations at 512 × 512: `full-50`, `ful
 
 Taylor reuse here is first-order extrapolation. The adaptive variants are SpeCa-inspired implementations with a final-block heuristic, not validated reproductions of the published methods. Their first predicted step after each full computation is unchecked; subsequent predictions are checked according to the policy.
 
+Second-order forecasting is available through an order digit in the config name: `taylor2-3` and, for example, `speca2-0.1-0.5`. It adds a curvature term computed from the last three full computations using Newton divided differences, which remain valid when adaptive rejections make the full-step spacing uneven. Before three full computations exist, it falls back to first order. It costs the same full steps as first order and caches one extra feature set per segment and guidance branch. These configs are not part of the default suite; pass them with `--configs`, for example `--configs full-50 full-17 taylor-3 taylor2-3`.
+
 ```sh
 uv pip install --python .venv/bin/python -r requirements-eval.txt
 .venv/bin/python scripts/check-klein-equivalence.py
