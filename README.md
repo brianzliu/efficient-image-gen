@@ -27,7 +27,12 @@ Edit `prompts/klein-test.txt` to change the prompt. The script defaults to 512 Ã
 
 The environment, model downloads, caches, and generated outputs are ignored by Git. The first generation can include initialization and compilation costs. The CLI timing includes model loading and should not be reported as warm inference latency. Run from a local terminal with Metal GPU access; restricted sandboxes may report that no Metal device is available.
 
-Initial execution check on an M1 Pro with 16 GB unified memory and macOS 27.0.1 succeeded using the defaults above and MFLUX 0.24.0. One run took 369 seconds end to end, reported 3.84 GB peak MLX memory, and produced a valid image matching the fox-and-mug prompt. macOS `time` separately reported a 5.32 GB peak process memory footprint. These memory measures have different scopes. This single run confirms execution, not a comparative performance or quality result.
+Initial execution check on an M1 Pro with 16 GB unified memory and macOS 27.0.1 succeeded using the defaults above and MFLUX 0.24.0. One run took 369 seconds end to end, reported 3.84 GB peak MLX memory, and produced a valid image matching the fox-and-mug prompt. macOS `time` separately reported a 5.32 GB peak process memory footprint. These memory measures have different scopes. 
+
+A second check on an Apple M4 with 16 GB unified memory (macOS 26.5.1, MFLUX 0.24.0, MLX 0.32.4) with the same defaults took 552 seconds end to end (about 11 s/step), with 3.05 GB peak MLX memory and a 4.96 GB peak process memory footprint.
+
+These single runs confirm execution, not a comparative performance or quality result.
+
 
 ## Evaluating acceleration
 
