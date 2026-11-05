@@ -1,4 +1,5 @@
 .venv/
+.venv-metrics/
 .cache/
 models/
 outputs/

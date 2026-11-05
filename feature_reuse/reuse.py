@@ -7,7 +7,7 @@ import mlx.core as mx
 @dataclass(frozen=True)
 class FixedInterval:
     interval: int
-    forecast: bool = False
+    order: int = 0
 
     def runs_blocks(self, step: int, predicted: int) -> bool:
         return step % self.interval == 0
@@ -25,7 +25,7 @@ class SpeCa:
     # The reference code uses 2, which leaves little room to adapt near 17 full steps.
     min_predicted: int = 1
     max_predicted: int = 8
-    forecast = True
+    order = 1
 
     def runs_blocks(self, step: int, predicted: int) -> bool:
         return step < self.warmup_steps or predicted >= self.max_predicted
@@ -86,15 +86,19 @@ class BlockReuse:
     def store(self, segment: str, residual: mx.array) -> None:
         key = (self.branch, segment)
         factors = [residual]
-        if self.policy.forecast and key in self.factors:
-            factors.append((residual - self.factors[key][0]) / self.full_spacing)
+        for order, previous in enumerate(self.factors.get(key, [])[: self.policy.order]):
+            factors.append((factors[order] - previous) / self.full_spacing)
         self.factors[key] = factors
 
     def predict(self, segment: str) -> mx.array:
         factors = self.factors[(self.branch, segment)]
-        if len(factors) == 1:
-            return factors[0]
-        return factors[0] + (self.step - self.last_full_step) * factors[1]
+        distance = self.step - self.last_full_step
+        output = factors[0]
+        coefficient = 1
+        for order, factor in enumerate(factors[1:], 1):
+            coefficient *= distance / order
+            output = output + coefficient * factor
+        return output
 
     def record_error(self, predicted: mx.array, actual: mx.array) -> None:
         # Text tokens never reach the output, and their large values would dominate.

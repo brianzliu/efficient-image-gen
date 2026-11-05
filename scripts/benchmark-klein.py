@@ -29,8 +29,8 @@ def parse_config(name: str):
         return int(match[1]), None
     if match := re.fullmatch(r"fixed-(\d+)", name):
         return REUSE_STEPS, FixedInterval(int(match[1]))
-    if match := re.fullmatch(r"taylor-(\d+)", name):
-        return REUSE_STEPS, FixedInterval(int(match[1]), forecast=True)
+    if match := re.fullmatch(r"taylor-(\d+)(?:-(\d+))?", name):
+        return REUSE_STEPS, FixedInterval(int(match[1]), order=int(match[2] or 1))
     if match := re.fullmatch(r"speca-([\d.]+|inf)-([\d.]+)", name):
         return REUSE_STEPS, SpeCa(float(match[1]), float(match[2]), REUSE_STEPS)
     raise ValueError(f"unknown config {name!r}")

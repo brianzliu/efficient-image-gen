@@ -69,10 +69,18 @@ class FixedIntervalTest(unittest.TestCase):
 
     def test_forecast_extrapolates_linearly(self) -> None:
         transformer = Transformer()
-        with reuse_blocks(transformer, FixedInterval(2, forecast=True)) as reuse:
+        with reuse_blocks(transformer, FixedInterval(2, order=1)) as reuse:
             run_step(transformer, reuse, 0)
             run_step(transformer, reuse, 2, image=2.0)
             self.assertTrue(mx.array_equal(run_step(transformer, reuse, 3, image=0.0), tokens(23.5)).item())
+
+    def test_second_order_forecast(self) -> None:
+        transformer = Transformer()
+        with reuse_blocks(transformer, FixedInterval(2, order=2)) as reuse:
+            run_step(transformer, reuse, 0)
+            run_step(transformer, reuse, 2, image=2.0)
+            run_step(transformer, reuse, 4, image=4.0)
+            self.assertTrue(mx.array_equal(run_step(transformer, reuse, 5, image=0.0), tokens(36.625)).item())
 
     def test_blocks_are_restored(self) -> None:
         transformer = Transformer()

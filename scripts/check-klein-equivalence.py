@@ -35,7 +35,7 @@ def main() -> int:
     checks = {
         "loop == mflux": image(),
         "every step full, fixed == mflux": image(FixedInterval(1)),
-        "every step full, forecast == mflux": image(FixedInterval(1, forecast=True)),
+        "every step full, forecast == mflux": image(FixedInterval(1, order=4)),
         "SpeCa warmup only == mflux": image(SpeCa(float("inf"), 1.0, STEPS, warmup_steps=STEPS)),
     }
     results = {name: np.array_equal(pixels, np.asarray(expected)) for name, pixels in checks.items()}
