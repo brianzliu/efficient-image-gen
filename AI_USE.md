@@ -4,12 +4,14 @@ This file records how our group used AI tools in this project, organized by the 
 
 ## Report
 
+We wrote most of the report ourselves, including the opening of the abstract, the first paragraph of the introduction, the Related Work paragraphs on diffusion and flow matching, efficient generation on devices, feature caching and prediction, and speculative techniques, and the Data section.
+
 ### Abstract, introduction, and related work
 
-Claude Code was used to draft additions to `report/report.tex` and `report/reference.bib`. We directed what to add and how to frame it, and revised the drafts over several rounds of feedback.
+Claude Code drafted a few additions to these sections, listed below, in `report/report.tex` and `report/reference.bib`. We decided what to add and how to frame it, and revised the drafts over several rounds of feedback. The hand-written text around these additions was not changed.
 
-- **Abstract:** Claude Code filled the placeholder sentences on the preliminary experiments, the evaluation, one finding, and next steps.
-- **Introduction:** Claude Code added a paragraph describing the existing methods we experimented with (feature reuse, higher-order samplers, and guidance policies) and our plan to potentially develop our own method.
+- **Abstract:** Claude Code wrote the sentences after our opening, on the preliminary experiments, the evaluation, one finding, and next steps.
+- **Introduction:** Claude Code added the second paragraph describing the existing methods we experimented with (feature reuse, higher-order samplers, and guidance policies) and our plan to potentially develop our own method.
 - **Related Work:** Claude Code added a paragraph on classifier-free guidance, limited-interval guidance, and adaptive guidance, with three new BibTeX entries.
 
 ## Repo
