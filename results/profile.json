@@ -1,0 +1,396 @@
+{
+  "stages": {
+    "load": {
+      "seconds": 0.8550951670040376,
+      "active_before_gb": 0.0,
+      "active_after_gb": 8e-09,
+      "peak_gb": 8.624e-06
+    },
+    "encode_cold": {
+      "seconds": 2.64709679200314,
+      "active_before_gb": 8e-09,
+      "active_after_gb": 1.7689618,
+      "peak_gb": 3.013796896
+    },
+    "encode_warm": {
+      "seconds": 2.6145249999826774,
+      "active_before_gb": 1.7689618,
+      "active_after_gb": 1.816184592,
+      "peak_gb": 2.937334768
+    },
+    "after_freeing_text_encoder": {
+      "seconds": 9.59029421210289e-07,
+      "active_before_gb": 0.0314962,
+      "active_after_gb": 0.0314962,
+      "peak_gb": 0.0
+    },
+    "denoise_cold_1_step": {
+      "seconds": 6.268239709024783,
+      "active_before_gb": 0.01574708,
+      "active_after_gb": 2.213598258,
+      "peak_gb": 3.137672262
+    },
+    "baseline_before": {
+      "seconds": 63.14432954095537,
+      "active_before_gb": 2.196034568,
+      "active_after_gb": 2.19629684,
+      "peak_gb": 3.207759378
+    },
+    "decode_cold": {
+      "seconds": 0.8753187089459971,
+      "active_before_gb": 2.196296712,
+      "active_after_gb": 2.294210638,
+      "peak_gb": 2.762652748
+    },
+    "decode_warm": {
+      "seconds": 0.8522601669537835,
+      "active_before_gb": 2.293948494,
+      "active_after_gb": 2.293948494,
+      "peak_gb": 2.76395861
+    },
+    "baseline_after": {
+      "seconds": 63.624266333994456,
+      "active_before_gb": 2.294210638,
+      "active_after_gb": 2.294472886,
+      "peak_gb": 3.305935424
+    }
+  },
+  "chip_memory_gb": 17.179869184,
+  "weights": {
+    "text_encoder": {
+      "summary": {
+        "stored_gb": 2.262920448,
+        "quantized_gb": 2.04374016,
+        "unquantized_gb": 0.219180288,
+        "quantized_as_float16_gb": 7.26663168
+      },
+      "groups": {
+        "layers.*.mlp.gate_proj": 504299520,
+        "layers.*.mlp.up_proj": 504299520,
+        "layers.*.mlp.down_proj": 504299520,
+        "layers.*.self_attn.q_proj": 212336640,
+        "layers.*.self_attn.o_proj": 212336640,
+        "embed_tokens.weight": 194478080,
+        "layers.*.self_attn.k_proj": 53084160,
+        "layers.*.self_attn.v_proj": 53084160,
+        "embed_tokens.scales": 12154880,
+        "embed_tokens.biases": 12154880,
+        "layers.*.input_layernorm.weight": 184320,
+        "layers.*.post_attention_layernorm.weight": 184320,
+        "layers.*.self_attn.q_norm": 9216,
+        "layers.*.self_attn.k_norm": 9216,
+        "norm.weight": 5120,
+        "rotary_emb.inv_freq": 256
+      }
+    },
+    "transformer": {
+      "summary": {
+        "stored_gb": 2.180004864,
+        "quantized_gb": 2.179989504,
+        "unquantized_gb": 1.536e-05,
+        "quantized_as_float16_gb": 7.751073792
+      },
+      "groups": {
+        "single_transformer_blocks.*.attn.to_qkv_mlp_proj": 955514880,
+        "single_transformer_blocks.*.attn.to_out": 424673280,
+        "transformer_blocks.*.ff.linear_in": 159252480,
+        "transformer_blocks.*.ff_context.linear_in": 159252480,
+        "transformer_blocks.*.ff.linear_out": 79626240,
+        "transformer_blocks.*.ff_context.linear_out": 79626240,
+        "double_stream_modulation_img.linear.weight": 28311552,
+        "double_stream_modulation_txt.linear.weight": 28311552,
+        "transformer_blocks.*.attn.to_q": 26542080,
+        "transformer_blocks.*.attn.to_k": 26542080,
+        "transformer_blocks.*.attn.to_v": 26542080,
+        "transformer_blocks.*.attn.to_out": 26542080,
+        "transformer_blocks.*.attn.add_q_proj": 26542080,
+        "transformer_blocks.*.attn.add_k_proj": 26542080,
+        "transformer_blocks.*.attn.add_v_proj": 26542080,
+        "transformer_blocks.*.attn.to_add_out": 26542080,
+        "single_stream_modulation.linear.weight": 14155776,
+        "context_embedder.weight": 11796480,
+        "norm_out.linear.weight": 9437184,
+        "time_guidance_embed.linear_2.weight": 4718592,
+        "double_stream_modulation_img.linear.scales": 1769472,
+        "double_stream_modulation_img.linear.biases": 1769472,
+        "double_stream_modulation_txt.linear.scales": 1769472,
+        "double_stream_modulation_txt.linear.biases": 1769472,
+        "single_stream_modulation.linear.scales": 884736,
+        "single_stream_modulation.linear.biases": 884736,
+        "context_embedder.scales": 737280,
+        "context_embedder.biases": 737280,
+        "norm_out.linear.scales": 589824,
+        "norm_out.linear.biases": 589824,
+        "time_guidance_embed.linear_1.weight": 393216,
+        "time_guidance_embed.linear_2.scales": 294912,
+        "time_guidance_embed.linear_2.biases": 294912,
+        "x_embedder.weight": 196608,
+        "proj_out.weight": 196608,
+        "time_guidance_embed.linear_1.scales": 24576,
+        "time_guidance_embed.linear_1.biases": 24576,
+        "x_embedder.scales": 12288,
+        "x_embedder.biases": 12288,
+        "proj_out.scales": 12288,
+        "proj_out.biases": 12288,
+        "single_transformer_blocks.*.attn.norm_q": 5120,
+        "single_transformer_blocks.*.attn.norm_k": 5120,
+        "transformer_blocks.*.attn.norm_q": 1280,
+        "transformer_blocks.*.attn.norm_k": 1280,
+        "transformer_blocks.*.attn.norm_added_q": 1280,
+        "transformer_blocks.*.attn.norm_added_k": 1280
+      }
+    },
+    "vae": {
+      "summary": {
+        "stored_gb": 0.165078086,
+        "quantized_gb": 0.00118784,
+        "unquantized_gb": 0.163890246,
+        "quantized_as_float16_gb": 0.004194304
+      },
+      "groups": {
+        "decoder.up_blocks.*.resnets": 67325696,
+        "encoder.down_blocks.*.resnets": 41059328,
+        "encoder.mid_block.resnets.*": 18886656,
+        "decoder.mid_block.resnets.*": 18886656,
+        "decoder.up_blocks.*.upsamplers": 10619392,
+        "encoder.down_blocks.*.downsamplers": 6194944,
+        "encoder.mid_block.attentions.*": 595968,
+        "decoder.mid_block.attentions.*": 595968,
+        "encoder.conv_out.weight": 589824,
+        "decoder.conv_in.weight": 294912,
+        "quant_conv.weight": 8192,
+        "encoder.conv_in.weight": 6912,
+        "decoder.conv_out.weight": 6912,
+        "post_quant_conv.weight": 2048,
+        "encoder.conv_norm_out.bias": 1024,
+        "encoder.conv_norm_out.weight": 1024,
+        "decoder.conv_in.bias": 1024,
+        "encoder.conv_in.bias": 256,
+        "decoder.conv_norm_out.bias": 256,
+        "decoder.conv_norm_out.weight": 256,
+        "bn.running_mean": 256,
+        "bn.running_var": 256,
+        "encoder.conv_out.bias": 128,
+        "quant_conv.bias": 128,
+        "post_quant_conv.bias": 64,
+        "decoder.conv_out.bias": 6
+      }
+    }
+  },
+  "prompt_tokens": [
+    42,
+    57,
+    40,
+    40,
+    37,
+    13
+  ],
+  "embed_shape": [
+    1,
+    512,
+    7680
+  ],
+  "baseline_before_denoise_s": 63.141577664995566,
+  "profile_block": {
+    "denoise_s": 64.50074304098962,
+    "paths": {
+      "transformer/single_block": {
+        "seconds": 51.397356745321304,
+        "calls": 400,
+        "macs": 0,
+        "transient_mb": 405.80609
+      },
+      "transformer/double_block": {
+        "seconds": 12.717205536959227,
+        "calls": 100,
+        "macs": 0,
+        "transient_mb": 453.013544
+      },
+      "transformer": {
+        "seconds": 0.3778670526808128,
+        "calls": 20,
+        "macs": 0,
+        "transient_mb": 420.123658
+      }
+    }
+  },
+  "profile_op": {
+    "denoise_s": 65.99888054112671,
+    "paths": {
+      "transformer/single_block/attention/linear": {
+        "seconds": 44.08588241157122,
+        "calls": 800,
+        "macs": 75376676044800,
+        "transient_mb": 84.934656
+      },
+      "transformer/double_block/feed_forward/linear": {
+        "seconds": 7.933537672506645,
+        "calls": 400,
+        "macs": 13045963161600,
+        "transient_mb": 37.748736
+      },
+      "transformer/single_block/attention/dot_product": {
+        "seconds": 3.73567125730915,
+        "calls": 400,
+        "macs": 5798205849600,
+        "transient_mb": 9.437196
+      },
+      "transformer/double_block/attention/linear": {
+        "seconds": 3.6951578785665333,
+        "calls": 800,
+        "macs": 5798205849600,
+        "transient_mb": 6.291456
+      },
+      "transformer/single_block/attention/rope": {
+        "seconds": 1.6914444126887247,
+        "calls": 400,
+        "macs": 0,
+        "transient_mb": 169.869312
+      },
+      "transformer/single_block/attention": {
+        "seconds": 1.6704984605312347,
+        "calls": 400,
+        "macs": 0,
+        "transient_mb": 188.74368
+      },
+      "transformer/double_block/attention/dot_product": {
+        "seconds": 0.9363846209016629,
+        "calls": 100,
+        "macs": 1449551462400,
+        "transient_mb": 9.437184
+      },
+      "transformer/double_block/attention": {
+        "seconds": 0.4524105764576234,
+        "calls": 100,
+        "macs": 0,
+        "transient_mb": 56.623108
+      },
+      "transformer/double_block/attention/rope": {
+        "seconds": 0.43126833881251514,
+        "calls": 100,
+        "macs": 0,
+        "transient_mb": 62.912512
+      },
+      "transformer/single_block": {
+        "seconds": 0.40725375193869695,
+        "calls": 400,
+        "macs": 0,
+        "transient_mb": 198.180864
+      },
+      "transformer/linear": {
+        "seconds": 0.3526064567267895,
+        "calls": 180,
+        "macs": 261111152640,
+        "transient_mb": 6.5536
+      },
+      "transformer/double_block/feed_forward": {
+        "seconds": 0.29883411212358624,
+        "calls": 200,
+        "macs": 0,
+        "transient_mb": 62.90841
+      },
+      "transformer/double_block": {
+        "seconds": 0.22831108956597745,
+        "calls": 100,
+        "macs": 0,
+        "transient_mb": 66.060288
+      },
+      "transformer": {
+        "seconds": 0.07180491829058155,
+        "calls": 20,
+        "macs": 0,
+        "transient_mb": 22.990854
+      }
+    }
+  },
+  "baseline_after_denoise_s": 63.62200012395624,
+  "eval_granularity": {
+    "step": {
+      "step_s": 6.231489783583674,
+      "peak_gb": 3.305935384
+    },
+    "pass": {
+      "step_s": 6.3535599920083765,
+      "peak_gb": 3.519658976
+    },
+    "block": {
+      "step_s": 6.347329558595083,
+      "peak_gb": 2.770868541
+    },
+    "linear": {
+      "step_s": 6.388232074596454,
+      "peak_gb": 2.715135106
+    }
+  },
+  "quantized_layers": {
+    "single.to_qkv_mlp_proj": {
+      "shape": [
+        27648,
+        3072
+      ],
+      "bits": 4,
+      "quantized_call_s": 0.07819450000533834,
+      "quantized_call_transient_mb": 84.934656,
+      "dequantize_s": 0.010485874954611063,
+      "dequantize_transient_mb": 169.869312,
+      "plain_float16_call_s": 0.06900366698391736,
+      "plain_float16_call_transient_mb": 84.934656,
+      "float16_weight_mb": 169.869312
+    },
+    "single.to_out": {
+      "shape": [
+        3072,
+        12288
+      ],
+      "bits": 4,
+      "quantized_call_s": 0.0337058330187574,
+      "quantized_call_transient_mb": 9.437184,
+      "dequantize_s": 0.004949583031702787,
+      "dequantize_transient_mb": 75.497472,
+      "plain_float16_call_s": 0.03192858397960663,
+      "plain_float16_call_transient_mb": 9.437184,
+      "float16_weight_mb": 75.497472
+    }
+  },
+  "text_token_sweep": {
+    "512": {
+      "step_s": 6.193812847021036,
+      "peak_gb": 3.305935376
+    },
+    "256": {
+      "step_s": 5.117712249668936,
+      "peak_gb": 3.416009028
+    },
+    "128": {
+      "step_s": 4.683704736002255,
+      "peak_gb": 3.317173552
+    },
+    "64": {
+      "step_s": 4.354368319327477,
+      "peak_gb": 3.309123888
+    },
+    "32": {
+      "step_s": 4.158821861337249,
+      "peak_gb": 3.354475332
+    }
+  },
+  "resolution_sweep": {
+    "256": {
+      "step_s": 3.101194861306188,
+      "peak_gb": 3.23911972
+    },
+    "384": {
+      "step_s": 4.3494275693277205,
+      "peak_gb": 3.278045712
+    },
+    "512": {
+      "step_s": 6.328477180679329,
+      "peak_gb": 3.305820688
+    },
+    "768": {
+      "step_s": 11.9863533336514,
+      "peak_gb": 3.5781412
+    }
+  },
+  "max_rss_gb": 2.112339968
+}
