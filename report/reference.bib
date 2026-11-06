@@ -204,3 +204,33 @@ URL = {https://github.com/apple/ml-stable-diffusion}
   url = 	 {https://proceedings.mlr.press/v202/leviathan23a.html},
   abstract = 	 {Inference from large autoregressive models like Transformers is slow - decoding K tokens takes K serial runs of the model. In this work we introduce speculative decoding - an algorithm to sample from autoregressive models faster without any changes to the outputs, by computing several tokens in parallel. At the heart of our approach lie the observations that (1) hard language-modeling tasks often include easier subtasks that can be approximated well by more efficient models, and (2) using speculative execution and a novel sampling method, we can make exact decoding from the large models faster, by running them in parallel on the outputs of the approximation models, potentially generating several tokens concurrently, and without changing the distribution. Our method can accelerate existing off-the-shelf models without retraining or architecture changes. We demonstrate it on T5-XXL and show a 2X-3X acceleration compared to the standard T5X implementation, with identical outputs.}
 }
+
+@misc{ho2022classifierfreediffusionguidance,
+      title={Classifier-Free Diffusion Guidance}, 
+      author={Jonathan Ho and Tim Salimans},
+      year={2022},
+      eprint={2207.12598},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2207.12598}, 
+}
+
+@misc{kynkaanniemi2024applyingguidancelimitedinterval,
+      title={Applying Guidance in a Limited Interval Improves Sample and Distribution Quality in Diffusion Models}, 
+      author={Tuomas Kynk{\"a}{\"a}nniemi and Miika Aittala and Tero Karras and Samuli Laine and Timo Aila and Jaakko Lehtinen},
+      year={2024},
+      eprint={2404.07724},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2404.07724}, 
+}
+
+@misc{castillo2023adaptiveguidancetrainingfreeacceleration,
+      title={Adaptive Guidance: Training-free Acceleration of Conditional Diffusion Models}, 
+      author={Angela Castillo and Jonas Kohler and Juan C. P{\'e}rez and Juan Pablo P{\'e}rez and Albert Pumarola and Bernard Ghanem and Pablo Arbel{\'a}ez and Ali Thabet},
+      year={2023},
+      eprint={2312.12487},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2312.12487}, 
+}
