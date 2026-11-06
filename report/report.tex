@@ -17,6 +17,13 @@
   Zhijian Liu \\
   {\tt zhijian@ucsd.edu} \\}
 
+% Pack the table and sample-image figure together on their float page.
+\makeatletter
+\setlength{\@fptop}{0pt}
+\setlength{\@fpsep}{16pt}
+\setlength{\@fpbot}{0pt plus 1fil}
+\makeatother
+
 \begin{document}
 \maketitle
 
@@ -85,6 +92,77 @@ These prompts are being used to benchmark some of the acceleration techniques li
 \section{Methods}
 
 \section{Results}
+
+\subsection{Initial feature-reuse pilot}
+
+Our initial pilot compared eight configurations of Q4 FLUX.2 Klein Base 4B on an Apple M1 Pro with 16 GB of unified memory. We generated 40 images using the five prompts in the Data section, seed 42, and one run per configuration and prompt. All configurations used 512 $\times$ 512 images, guidance 3.5, FP16 transformer computation, and Euler sampling in MFLUX 0.24.0 and MLX 0.32.4. The 50-step run without feature reuse, \texttt{full-50}, served as the image reference.
+
+Table~\ref{tab:pilot-results} summarizes the results. Generation time includes prompt encoding, denoising, and decoding with model weights already loaded. It excludes model loading, saving images, and offline quality scoring. LPIPS measures perceptual distance from the matching reference image, so lower values indicate closer agreement. ImageReward is a learned preference score, with higher values indicating a stronger predicted preference. Neither metric establishes human preference or correct counting, lettering, or anatomy.
+
+\begin{table}[p]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrr}
+\hline
+Configuration & Full steps & Time (s) & Speedup & LPIPS & ImageReward \\
+\hline
+\texttt{full-50}       & 50.0 & 316.6 & $1.00\times$ & 0.000 & 1.453 \\
+\texttt{full-17}       & 17.0 & 118.0 & $2.68\times$ & 0.136 & 1.246 \\
+\texttt{fixed-3}       & 17.0 & 119.7 & $2.64\times$ & 0.104 & 1.334 \\
+\texttt{taylor-3}      & 17.0 & 118.4 & $2.68\times$ & 0.048 & 1.438 \\
+\texttt{speca-0.1-0.5} & 19.6 & 141.4 & $2.24\times$ & 0.035 & 1.425 \\
+\texttt{speca-0.3-0.5} & 13.0 & 100.3 & $3.16\times$ & 0.113 & 1.411 \\
+\texttt{speca-0.3-1.0} & 11.4 &  91.1 & $3.47\times$ & 0.118 & 1.412 \\
+\texttt{speca-nocheck} &  8.0 &  58.7 & $5.39\times$ & 0.256 & 1.295 \\
+\hline
+\end{tabular}
+\caption{Initial pilot results, averaged over five prompts at seed 42. Speedup is the ratio of mean reference time to mean configuration time. Full steps count complete transformer evaluations per branch. All configurations retain 50 scheduler updates except \texttt{full-17}, which uses 17.}
+\label{tab:pilot-results}
+\end{table}
+
+\begin{figure}[p]
+\centering
+\parbox{\linewidth}{\textbf{Sample outputs.}
+Figure~\ref{fig:pilot-samples} shows two prompts from the pilot under the reference, reduced-step, Taylor, and verification-disabled configurations. The fox scene retains a similar overall arrangement across these examples, while the hands and ribbon show more visible changes in geometry. These examples illustrate differences between outputs; they are not a blinded preference evaluation.}
+\par\vspace{8pt}
+
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{@{}cccc@{}}
+\footnotesize\texttt{full-50} & \footnotesize\texttt{full-17} & \footnotesize\texttt{taylor-3} & \footnotesize\texttt{speca-nocheck} \\
+\multicolumn{4}{c}{\small Fox and mug} \\[2pt]
+\includegraphics[width=0.24\linewidth]{../reports/klein-ablation-pilot/images/r0-p0-s42-full-50.png} &
+\includegraphics[width=0.24\linewidth]{../reports/klein-ablation-pilot/images/r0-p0-s42-full-17.png} &
+\includegraphics[width=0.24\linewidth]{../reports/klein-ablation-pilot/images/r0-p0-s42-taylor-3.png} &
+\includegraphics[width=0.24\linewidth]{../reports/klein-ablation-pilot/images/r0-p0-s42-speca-nocheck.png} \\[4pt]
+\multicolumn{4}{c}{\small Hands tying a ribbon} \\[2pt]
+\includegraphics[width=0.24\linewidth]{../reports/klein-ablation-pilot/images/r0-p4-s42-full-50.png} &
+\includegraphics[width=0.24\linewidth]{../reports/klein-ablation-pilot/images/r0-p4-s42-full-17.png} &
+\includegraphics[width=0.24\linewidth]{../reports/klein-ablation-pilot/images/r0-p4-s42-taylor-3.png} &
+\includegraphics[width=0.24\linewidth]{../reports/klein-ablation-pilot/images/r0-p4-s42-speca-nocheck.png} \\[4pt]
+\end{tabular}
+\caption{Sample images from the initial pilot, all generated at 512 $\times$ 512 with seed 42. Columns show the 50-step reference, 17-step baseline, Taylor feature forecasting, and adaptive reuse with verification disabled. Rows correspond to the fox-and-mug and hands-and-ribbon prompts listed in the Data section. Images are displayed without cropping or retouching.}
+\label{fig:pilot-samples}
+\end{figure}
+
+\textbf{Forecasting at a fixed computation budget.}
+The reduced-step, fixed-reuse, and Taylor configurations each used 17 full steps and took approximately the same time. Taylor forecasting produced images closer to the reference, with mean LPIPS 0.048 compared with 0.136 for reduced-step sampling and 0.104 for fixed reuse. Its ImageReward score was also higher than those of the other two configurations. Relative to \texttt{full-50}, Taylor reduced mean generation time from 316.6 to 118.4 seconds, a $2.68\times$ speedup. Its ImageReward of 1.438 was close to the reference's 1.453, but we did not specify a quality tolerance or test statistical equivalence. These results support Taylor forecasting as a starting point for further experiments, without establishing lossless acceleration.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{../reports/klein-ablation-pilot/tradeoffs.png}
+\caption{Generation latency and quality metrics from the initial pilot. Reference similarity and automated quality scores describe different aspects of the outputs and should be interpreted separately.}
+\label{fig:pilot-tradeoffs}
+\end{figure}
+
+\textbf{Verification cost and reference similarity.}
+
+The stricter adaptive configuration, \texttt{speca-0.1-0.5}, achieved a lower LPIPS of 0.035 but took 141.4 seconds, about 19\% longer than Taylor. Increasing the starting threshold to 0.3 reduced mean time to 100.3 seconds while increasing LPIPS to 0.113. Removing threshold decay reduced time further to 91.1 seconds. Disabling verification reached $5.39\times$ speedup but produced the largest reference distance, with LPIPS 0.256. Our adaptive variants use a simplified final-block verification heuristic, so these findings concern our implementation rather than a validated reproduction of the published SpeCa method. Greater distance from the reference can also reflect a different valid image, rather than a worse one.
+
+\textbf{Energy and memory.}
+We estimated CPU+GPU energy from macmon telemetry on the three prompts with complete coverage for every configuration: the sign, market, and hands prompts, totaling 24 images. On this matched subset, mean energy decreased from 7.700 kJ per image for \texttt{full-50} to 2.747 kJ for Taylor, a 64.3\% reduction. Strict adaptive reuse used 3.308 kJ, while disabling verification used 1.367 kJ alongside the largest reference drift. These estimates include background activity on an active desktop and are not isolated model or whole-device energy measurements. Peak MLX allocation was approximately 5.20 GB for every configuration. Fixed reuse required about 37.7 MB of feature cache and forecasting about 75.5 MB, so the pilot did not demonstrate a reduction in peak allocation or minimum device-memory requirements.
+
+These observations come from a small development set with one seed and no repeated timings. Thermal drift, background activity, and system memory pressure limit comparisons of small timing and energy differences. The saved outputs passed checks of trial coverage, image hashes, computation counters, timing totals, speedup calculations, and energy aggregation. However, these checks do not establish generalization or human-rated quality. We plan to evaluate more seeds and held-out prompts, repeat measurements in a controlled session, and select a quality tolerance before tuning the adaptive policy.
 
 \section{Discussion}
 
