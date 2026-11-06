@@ -19,12 +19,32 @@ import mlx.core as mx
 
 from feature_reuse.klein import decode, denoise, encode_prompt, load_klein
 from feature_reuse.reuse import FixedInterval, SpeCa
+from feature_reuse.guidance import parse_guidance
+from feature_reuse.samplers import SAMPLERS
 
 REUSE_STEPS = 50
 FIELDS = ["prompt_id", "seed", "config", "full_steps", "rejected_steps", "denoise_s", "peak_mlx_gb", "cache_mb"]
 
 
 def parse_config(name: str):
+    """Return (steps, policy, sampler, guidance).
+
+    Optional "+" suffixes pick a sampler (default euler) and a guidance policy (default cfg),
+    in either order, e.g. taylor-3+dpmpp2m+ag-0.995 or full-50+interval-0.9-0.2.
+    """
+    base, *suffixes = name.split("+")
+    sampler = guidance = None
+    for suffix in suffixes:
+        if suffix in SAMPLERS and sampler is None:
+            sampler = suffix
+        elif suffix not in SAMPLERS and guidance is None:
+            guidance = parse_guidance(suffix)
+        else:
+            raise ValueError(f"repeated sampler or guidance {suffix!r} in config {name!r}")
+    return (*parse_policy(base), sampler or "euler", guidance or parse_guidance("cfg"))
+
+
+def parse_policy(name: str):
     if match := re.fullmatch(r"full-(\d+)", name):
         return int(match[1]), None
     if match := re.fullmatch(r"fixed-(\d+)", name):
@@ -33,6 +53,8 @@ def parse_config(name: str):
         return REUSE_STEPS, FixedInterval(int(match[1]), forecast=True)
     if match := re.fullmatch(r"speca-([\d.]+|inf)-([\d.]+)", name):
         return REUSE_STEPS, SpeCa(float(match[1]), float(match[2]), REUSE_STEPS)
+    if name == "speca-nocheck":
+        return REUSE_STEPS, SpeCa(0.3, 0.5, REUSE_STEPS, min_predicted=100)
     raise ValueError(f"unknown config {name!r}")
 
 
@@ -84,11 +106,11 @@ def main() -> None:
             for name in names[trial % len(names) :] + names[: trial % len(names)]:
                 if (prompt_id, seed, name) in done:
                     continue
-                steps, policy = configs[name]
+                steps, policy, sampler, guidance = configs[name]
                 gc.collect()
                 mx.clear_cache()
                 mx.reset_peak_memory()
-                result = denoise(model, embeds[prompt_id], seed, steps, policy)
+                result = denoise(model, embeds[prompt_id], seed, steps, policy, sampler, guidance)
                 peak_gb = mx.get_peak_memory() / 1000**3
                 decode(model, result.latents).save(args.out / "images" / f"p{prompt_id}-s{seed}-{name}.png")
                 writer.writerow(

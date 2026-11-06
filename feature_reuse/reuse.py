@@ -45,19 +45,24 @@ class BlockReuse:
         self.skip = False
         self.checking = False
         self.predicted = 0
-        self.last_full_step = 0
-        self.full_spacing = 0
         self.full_steps = 0
         self.rejected_steps = 0
         self.errors = []
+        # (branch, segment) -> (step the factors were computed at, factors). Timing is kept per
+        # branch because guidance policies can leave the unconditional branch out of a full step.
         self.factors = {}
         self.stream_in = None
         self.text_tokens = 0
         self.checked_steps = 0
 
-    def begin_step(self, step: int) -> None:
+    def begin_step(self, step: int, branches=("cond", "uncond")) -> None:
         self.step = step
-        if self.policy is None or self.policy.runs_blocks(step, self.predicted):
+        if (
+            self.policy is None
+            or self.policy.runs_blocks(step, self.predicted)
+            # A branch with nothing cached cannot be predicted, e.g. guidance switching on mid-run.
+            or any((branch, "last") not in self.factors for branch in branches)
+        ):
             self._start_full_step()
         else:
             self.skip = True
@@ -69,8 +74,6 @@ class BlockReuse:
         self.checking = False
         self.predicted = 0
         self.full_steps += 1
-        self.full_spacing = self.step - self.last_full_step
-        self.last_full_step = self.step
 
     def confirm_step(self) -> bool:
         if not self.skip:
@@ -89,14 +92,15 @@ class BlockReuse:
         key = (self.branch, segment)
         factors = [residual]
         if self.policy.forecast and key in self.factors:
-            factors.append((residual - self.factors[key][0]) / self.full_spacing)
-        self.factors[key] = factors
+            stored_step, previous = self.factors[key]
+            factors.append((residual - previous[0]) / (self.step - stored_step))
+        self.factors[key] = (self.step, factors)
 
     def predict(self, segment: str) -> mx.array:
-        factors = self.factors[(self.branch, segment)]
+        stored_step, factors = self.factors[(self.branch, segment)]
         if len(factors) == 1:
             return factors[0]
-        return factors[0] + (self.step - self.last_full_step) * factors[1]
+        return factors[0] + (self.step - stored_step) * factors[1]
 
     def record_error(self, predicted: mx.array, actual: mx.array) -> None:
         # Text tokens never reach the output, and their large values would dominate.
@@ -105,7 +109,7 @@ class BlockReuse:
         self.errors.append(mx.sqrt(mx.sum(difference**2)) / (mx.sqrt(mx.sum(actual**2)) + 1e-8))
 
     def arrays(self) -> list[mx.array]:
-        return [factor for factors in self.factors.values() for factor in factors]
+        return [factor for _, factors in self.factors.values() for factor in factors]
 
 
 class _DoubleBlock:

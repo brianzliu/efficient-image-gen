@@ -41,7 +41,7 @@ def tokens(value: float) -> mx.array:
 
 
 def run_step(transformer, reuse, step: int, image: float = 1.0, branches=("cond",)) -> mx.array:
-    reuse.begin_step(step)
+    reuse.begin_step(step, branches)
     for branch in branches:
         reuse.branch = branch
         output = transformer(image)
@@ -73,6 +73,37 @@ class FixedIntervalTest(unittest.TestCase):
             run_step(transformer, reuse, 0)
             run_step(transformer, reuse, 2, image=2.0)
             self.assertTrue(mx.array_equal(run_step(transformer, reuse, 3, image=0.0), tokens(23.5)).item())
+
+    def test_forecast_timing_is_per_branch(self) -> None:
+        # The image body residual is 5x + 1 and the last block adds 10. Uncond is computed at
+        # steps 0 and 2, giving slope (11 - 6) / 2, then left out of the full step at 4.
+        transformer = Transformer()
+        both = ("cond", "uncond")
+        with reuse_blocks(transformer, FixedInterval(2, forecast=True)) as reuse:
+            run_step(transformer, reuse, 0, image=1.0, branches=both)
+            run_step(transformer, reuse, 2, image=2.0, branches=both)
+            run_step(transformer, reuse, 4, image=3.0, branches=("cond",))
+            reuse.begin_step(5, both)
+            reuse.branch = "uncond"
+            # Forecast from step 2: 11 + 3 * 2.5, plus the last block and the zero input.
+            self.assertTrue(mx.array_equal(transformer(0.0), tokens(28.5)).item())
+            reuse.branch = "cond"
+            # Cond was computed at steps 2 and 4: 16 + 1 * 2.5 + 10.
+            self.assertTrue(mx.array_equal(transformer(0.0), tokens(28.5)).item())
+
+    def test_branch_without_cache_forces_full_step(self) -> None:
+        transformer = Transformer()
+        with reuse_blocks(transformer, FixedInterval(2)) as reuse:
+            run_step(transformer, reuse, 0, branches=("cond",))
+            # Step 1 would reuse, but uncond has never been computed.
+            output = run_step(transformer, reuse, 1, branches=("cond", "uncond"))
+            self.assertFalse(reuse.skip)
+            self.assertTrue(mx.array_equal(output, tokens(17.0)).item())
+            run_step(transformer, reuse, 2, branches=("cond", "uncond"))
+            self.assertFalse(reuse.skip)
+            run_step(transformer, reuse, 3, branches=("cond", "uncond"))
+            self.assertTrue(reuse.skip)
+        self.assertEqual(reuse.full_steps, 3)
 
     def test_blocks_are_restored(self) -> None:
         transformer = Transformer()

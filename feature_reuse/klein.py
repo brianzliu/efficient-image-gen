@@ -10,7 +10,9 @@ from mflux.models.flux2.latent_creator.flux2_latent_creator import Flux2LatentCr
 from mflux.models.flux2.variants import Flux2Klein
 from mflux.utils.image_util import ImageUtil
 
+from feature_reuse.guidance import AlwaysOn
 from feature_reuse.reuse import reuse_blocks
+from feature_reuse.samplers import make_sampler
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "klein-base-4b-q4"
 SCHEDULER = "flow_match_euler_discrete"
@@ -26,6 +28,11 @@ class Denoised:
     rejected_steps: int
     cache_bytes: int
     checked_steps: int = 0
+    # Transformer passes per branch, counting both CFG branches where they ran.
+    full_passes: int = 0
+    verification_passes: int = 0
+    # Steps whose velocity used the unconditional branch.
+    guided_steps: int = 0
 
 
 def load_klein() -> Flux2Klein:
@@ -46,7 +53,15 @@ def encode_prompt(model: Flux2Klein, prompt: str) -> tuple[mx.array, ...]:
     return embeds
 
 
-def denoise(model: Flux2Klein, embeds: tuple[mx.array, ...], seed: int, steps: int, policy=None) -> Denoised:
+def denoise(
+    model: Flux2Klein,
+    embeds: tuple[mx.array, ...],
+    seed: int,
+    steps: int,
+    policy=None,
+    sampler: str = "euler",
+    guidance=None,
+) -> Denoised:
     prompt, text_ids, negative_prompt, negative_text_ids = embeds
     config = Config(
         model_config=model.model_config,
@@ -57,6 +72,10 @@ def denoise(model: Flux2Klein, embeds: tuple[mx.array, ...], seed: int, steps: i
         scheduler=SCHEDULER,
     )
     scheduler = config.scheduler
+    solver = make_sampler(sampler, scheduler.sigmas)
+    guide = (guidance or AlwaysOn()).begin()
+    sigmas = scheduler.sigmas.tolist()
+    counts = dict(full=0, verification=0, guided=0)
     latents, latent_ids, _, _ = Flux2LatentCreator.prepare_packed_latents(
         seed=seed, height=SIZE, width=SIZE, batch_size=1
     )
@@ -67,6 +86,10 @@ def denoise(model: Flux2Klein, embeds: tuple[mx.array, ...], seed: int, steps: i
 
         def run(branch: str, encoder_hidden_states: mx.array, ids: mx.array) -> mx.array:
             reuse.branch = branch
+            if not reuse.skip:
+                counts["full"] += 1
+            elif reuse.checking:
+                counts["verification"] += 1
             return model.transformer(
                 hidden_states=latents,
                 encoder_hidden_states=encoder_hidden_states,
@@ -76,23 +99,40 @@ def denoise(model: Flux2Klein, embeds: tuple[mx.array, ...], seed: int, steps: i
                 guidance=None,
             )
 
-        def predict() -> mx.array:
+        def predict(guided: bool) -> tuple[mx.array, mx.array | None]:
             noise = run("cond", prompt, text_ids)
-            negative_noise = run("uncond", negative_prompt, negative_text_ids)
-            return negative_noise + GUIDANCE * (noise - negative_noise)
+            negative_noise = run("uncond", negative_prompt, negative_text_ids) if guided else None
+            return noise, negative_noise
 
         for step in range(steps):
             start = perf_counter()
-            reuse.begin_step(step)
-            noise = predict()
+            guided = guide.wants_uncond(step, sigmas[step])
+            reuse.begin_step(step, ("cond", "uncond") if guided else ("cond",))
+            noise, negative_noise = predict(guided)
             if not reuse.confirm_step():
-                noise = predict()
-            latents = scheduler.step(noise=noise, timestep=step, latents=latents, sigmas=scheduler.sigmas)
+                noise, negative_noise = predict(guided)
+            if guided:
+                counts["guided"] += 1
+                # Decide later steps from computed outputs only, never from reused predictions.
+                if not reuse.skip:
+                    guide.observe(noise, negative_noise)
+                noise = negative_noise + GUIDANCE * (noise - negative_noise)
+            latents = solver.step(noise, step, latents)
             mx.eval(latents, *reuse.arrays())
             seconds += perf_counter() - start
 
         cache_bytes = sum(array.nbytes for array in reuse.arrays())
-        return Denoised(latents, seconds, reuse.full_steps, reuse.rejected_steps, cache_bytes, reuse.checked_steps)
+        return Denoised(
+            latents,
+            seconds,
+            reuse.full_steps,
+            reuse.rejected_steps,
+            cache_bytes,
+            reuse.checked_steps,
+            counts["full"],
+            counts["verification"],
+            counts["guided"],
+        )
 
 
 def decode(model: Flux2Klein, latents: mx.array):
