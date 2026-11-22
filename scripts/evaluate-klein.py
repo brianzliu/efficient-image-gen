@@ -18,9 +18,8 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("HF_HOME", str(ROOT / ".cache/huggingface"))
 import mlx.core as mx
 from feature_reuse.klein import CHECKPOINT, CHECKPOINT_REVISION, SIZE, GUIDANCE, SCHEDULER, load_klein, encode_prompt, denoise, decode
-from feature_reuse.reuse import SpeCa
+from feature_reuse.reuse import SpeCa, TeaCache
 from feature_reuse.spectrum import Spectrum
-from feature_reuse.teacache import TeaCache
 from evaluation.experiment import BaselineCache, baseline_fields, load_completed, sha256_file, trial_key
 
 spec = importlib.util.spec_from_file_location("benchmark", ROOT / "scripts/benchmark-klein.py")
@@ -138,7 +137,7 @@ def main():
     if Spectrum in remaining_policies:
         denoise(model, warm, args.seeds[0], 7, Spectrum())
     if TeaCache in remaining_policies:
-        denoise(model, warm, args.seeds[0], 3, TeaCache())
+        denoise(model, warm, args.seeds[0], 3, TeaCache(0.11, 3))
     del warm
     print("Warmup complete", flush=True)
     for repeat, pid, prompt, seed, name in generate:

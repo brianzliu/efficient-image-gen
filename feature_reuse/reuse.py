@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import mlx.core as mx
 
 from feature_reuse.spectrum import SpectralForecast, Spectrum
-from feature_reuse.teacache import TeaCache, TeaCacheGate
 
 
 def _check_curvature_weight(weight: float) -> None:
@@ -57,6 +56,39 @@ class SpeCa:
         return self.base_threshold * self.decay ** (step / self.total_steps)
 
 
+# Fitted for Klein by scripts/calibrate-teacache.py. Highest power first.
+KLEIN_TEACACHE_COEFFICIENTS = (
+    21309.223068516723,
+    -4293.211814252035,
+    287.8941826749216,
+    -7.476169497672445,
+    0.10480946102897497,
+)
+
+
+@dataclass(frozen=True)
+class TeaCache:
+    """Skip blocks until the rescaled input change since the last full step reaches the threshold."""
+
+    threshold: float
+    total_steps: int
+    forecast: bool = False
+    coefficients: tuple[float, ...] = KLEIN_TEACACHE_COEFFICIENTS
+    order = 1
+
+    def runs_blocks(self, step: int, predicted: int) -> bool:
+        return step == 0 or step == self.total_steps - 1
+
+    def checks(self, predicted: int) -> bool:
+        return False
+
+    def distance(self, change: float) -> float:
+        total = 0.0
+        for coefficient in self.coefficients:
+            total = total * change + coefficient
+        return total
+
+
 class BlockReuse:
     def __init__(self, policy) -> None:
         self.policy = policy
@@ -76,9 +108,14 @@ class BlockReuse:
         self.stream_in = None
         self.text_tokens = 0
         self.checked_steps = 0
+        self.observed = False
+        self.previous_input = None
+        self.accumulated = 0.0
+        self.changes = []
 
     def begin_step(self, step: int, branches=("cond", "uncond")) -> None:
         self.step = step
+        self.observed = False
         if (
             self.policy is None
             or self.policy.runs_blocks(step, self.predicted)
@@ -109,6 +146,22 @@ class BlockReuse:
                 return False
         self.predicted += 1
         return True
+
+    def observe(self, modulated: mx.array) -> None:
+        # TeaCache decides once per step, from the first branch's input, before any block runs.
+        if self.observed:
+            return
+        self.observed = True
+        if self.previous_input is not None:
+            previous = self.previous_input.astype(mx.float32)
+            change = (mx.mean(mx.abs(modulated.astype(mx.float32) - previous)) / mx.mean(mx.abs(previous))).item()
+            self.changes.append(change)
+            self.accumulated += self.policy.distance(change)
+        self.previous_input = modulated
+        if self.skip and self.accumulated >= self.policy.threshold:
+            self._start_full_step()
+        if not self.skip:
+            self.accumulated = 0.0
 
     def store(self, segment: str, residual: mx.array) -> None:
         # Newton divided differences over the most recent full steps, newest first.
@@ -144,11 +197,17 @@ class BlockReuse:
         self.errors.append(mx.sqrt(mx.sum(difference**2)) / (mx.sqrt(mx.sum(actual**2)) + 1e-8))
 
     def arrays(self) -> list[mx.array]:
-        return [factor for factors in self.factors.values() for factor in factors]
+        arrays = [factor for factors in self.factors.values() for factor in factors]
+        if self.previous_input is not None:
+            arrays.append(self.previous_input)
+        return arrays
 
     def capture_input(self, text, image, block, **kwargs) -> None:
         self.text_tokens = text.shape[1]
         self.stream_in = mx.concatenate([text, image], axis=1)
+        if isinstance(self.policy, TeaCache):
+            (shift, scale, _), _ = kwargs["temb_mod_params_img"]
+            self.observe((1 + scale) * block.norm1(image) + shift)
 
     def finish(self, block, hidden_states, **kwargs) -> mx.array:
         if self.skip:
@@ -163,25 +222,19 @@ class BlockReuse:
         return output
 
 
-class _ImageFeatureReuse(BlockReuse):
-    """Reuse the image stream at the boundary between transformer blocks and output head."""
+class _SpectrumReuse(BlockReuse):
+    """Forecast image features at the boundary between the blocks and the output head."""
 
-    def __init__(self, policy: Spectrum | TeaCache, sigmas: list[float]) -> None:
+    def __init__(self, policy: Spectrum, sigmas: list[float]) -> None:
         super().__init__(policy)
-        self.steps = len(sigmas) - 1
-        self.gate = TeaCacheGate(policy) if isinstance(policy, TeaCache) else None
-        self.refresh = policy.refresh_steps(self.steps) if self.gate is None else set()
-        self.residuals = {}
-        self.forecasts = {} if self.gate else {
+        self.refresh = policy.refresh_steps(len(sigmas) - 1)
+        self.forecasts = {
             branch: SpectralForecast(policy, sigmas) for branch in ("cond", "uncond")
         }
 
     def begin_step(self, step: int, branches=("cond", "uncond")) -> None:
         self.step = step
-        if self.gate:
-            self.gate_pending = True
-            self.force_refresh = step in (0, self.steps - 1) or any(b not in self.residuals for b in branches)
-        elif step in self.refresh or any(self.forecasts[b].rhs is None for b in branches):
+        if step in self.refresh or any(self.forecasts[b].rhs is None for b in branches):
             self._start_full_step()
         else:
             self.skip = True
@@ -189,37 +242,17 @@ class _ImageFeatureReuse(BlockReuse):
     def capture_input(self, text, image, block, **kwargs) -> None:
         self.text_tokens = text.shape[1]
         self.stream_in = image
-        if self.gate and self.gate_pending:
-            # Klein's image modulation depends on the shared latent and timestep.
-            # The two CFG branches can share the gate but need separate residuals.
-            shift, scale, _ = kwargs["temb_mod_params_img"][0]
-            signal = (1 + scale) * block.norm1(image) + shift
-            self.gate_pending = False
-            if self.gate.reuse(signal, self.force_refresh):
-                self.skip = True
-            else:
-                self.residuals.clear()
-                self._start_full_step()
 
     def finish(self, block, hidden_states, **kwargs) -> mx.array:
         if self.skip:
-            if self.gate:
-                image = self.stream_in + self.residuals[self.branch]
-            else:
-                image = self.forecasts[self.branch].predict(self.step, self.stream_in)
+            image = self.forecasts[self.branch].predict(self.step, self.stream_in)
             return mx.concatenate([hidden_states[:, :self.text_tokens], image], axis=1)
         output = block(hidden_states=hidden_states, **kwargs)
         image = output[:, self.text_tokens:]
-        if self.gate:
-            self.residuals[self.branch] = image - self.stream_in
-        else:
-            self.forecasts[self.branch].update(self.step, image)
+        self.forecasts[self.branch].update(self.step, image)
         return output
 
     def arrays(self) -> list[mx.array]:
-        if self.gate:
-            signal = self.gate.previous_input
-            return [*self.residuals.values(), *([signal] if signal is not None else [])]
         return [forecast.rhs for forecast in self.forecasts.values() if forecast.rhs is not None]
 
 
@@ -253,7 +286,7 @@ class _SingleBlock:
 
 @contextmanager
 def reuse_blocks(transformer, policy, sigmas=None):
-    reuse = _ImageFeatureReuse(policy, sigmas) if isinstance(policy, (Spectrum, TeaCache)) else BlockReuse(policy)
+    reuse = _SpectrumReuse(policy, sigmas) if isinstance(policy, Spectrum) else BlockReuse(policy)
     if policy is None:
         yield reuse
         return

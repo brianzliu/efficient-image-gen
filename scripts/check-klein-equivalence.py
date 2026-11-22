@@ -12,7 +12,7 @@ from mflux.utils.apple_silicon import AppleSiliconUtil
 
 from feature_reuse.klein import GUIDANCE, SCHEDULER, SIZE, decode, denoise, encode_prompt, load_klein
 from feature_reuse.guidance import CosineSwitchOff, Interval
-from feature_reuse.reuse import FixedInterval, SpeCa
+from feature_reuse.reuse import FixedInterval, SpeCa, TeaCache
 
 STEPS = 4
 SEED = 42
@@ -82,6 +82,7 @@ def main() -> int:
         ),
         "every step full, damped second-order forecast == mflux": (image(damped), expected),
         "SpeCa warmup only == mflux": (image(SpeCa(float("inf"), 1.0, STEPS, warmup_steps=STEPS)), expected),
+        "TeaCache, zero threshold, forecast == mflux": (image(TeaCache(0.0, STEPS, forecast=True, coefficients=(1.0, 0.0))), expected),
         # Composition: the sampler sees the same velocities when every reuse step runs in full.
         "dpmpp2m, every step full, forecast == dpmpp2m": (image(FixedInterval(1, forecast=True), "dpmpp2m"), dpm),
         "dpmpp2m, every step full, damped second-order forecast == dpmpp2m": (image(damped, "dpmpp2m"), dpm),

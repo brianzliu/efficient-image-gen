@@ -7,7 +7,7 @@ import numpy as np
 
 from feature_reuse.sharpeuler import sigma_grid
 from feature_reuse.spectrum import SpectralForecast, Spectrum
-from feature_reuse.teacache import TeaCache, TeaCacheGate
+from feature_reuse.reuse import TeaCache
 
 
 class SpectrumTest(unittest.TestCase):
@@ -44,25 +44,12 @@ class SharpEulerTest(unittest.TestCase):
                 sigma_grid(17, profile)
 
 
-class TeaCacheTest(unittest.TestCase):
-    def test_accumulates_small_changes_until_refresh(self):
-        gate = TeaCacheGate(TeaCache(0.25))
-        signal = mx.ones((1, 4))
-        self.assertFalse(gate.reuse(signal, force=True))
-        self.assertTrue(gate.reuse(signal * 1.01, force=False))
-        self.assertFalse(gate.reuse(signal * 1.02, force=False))
-        self.assertTrue(gate.reuse(signal * 1.03, force=False))
-        self.assertFalse(gate.reuse(signal * 2, force=False))
-        self.assertTrue(gate.reuse(signal * 2.01, force=False))
-        self.assertFalse(gate.reuse(signal * 2.02, force=True))
-
-
 class AccelerationConfigTest(unittest.TestCase):
     def test_new_names_and_calibration_requirement(self):
         script = Path(__file__).resolve().parents[1] / "scripts" / "benchmark-klein.py"
         parse = runpy.run_path(str(script))["parse_config"]
         self.assertIsInstance(parse("spectrum+unipc")[1], Spectrum)
-        self.assertEqual(parse("teacache-0.18")[1], TeaCache(0.18))
+        self.assertEqual(parse("teacache-0.18")[1], TeaCache(0.18, 50))
         with self.assertRaisesRegex(ValueError, "--sharpeuler-profile"):
             parse("sharpeuler-17")
         profile = {"sharpness": [1.0] * 8}

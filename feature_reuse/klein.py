@@ -102,6 +102,7 @@ def denoise(
                 txt_ids=ids,
                 guidance=None,
             )
+            # Count after the call: TeaCache decides whether the step is full inside the first block.
             if not reuse.skip:
                 counts["full"] += 1
             elif reuse.checking:

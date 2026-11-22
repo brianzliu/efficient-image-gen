@@ -18,12 +18,11 @@ os.environ.setdefault("HF_HOME", str(ROOT / ".cache" / "huggingface"))
 import mlx.core as mx
 
 from feature_reuse.klein import CHECKPOINT, CHECKPOINT_REVISION, GUIDANCE, SIZE, decode, denoise, encode_prompt, load_klein
-from feature_reuse.reuse import FixedInterval, SpeCa
+from feature_reuse.reuse import FixedInterval, SpeCa, TeaCache
 from feature_reuse.guidance import parse_guidance
 from feature_reuse.samplers import SAMPLERS
 from feature_reuse.sharpeuler import sigma_grid
 from feature_reuse.spectrum import Spectrum
-from feature_reuse.teacache import TeaCache
 
 REUSE_STEPS = 50
 FIELDS = ["prompt_id", "seed", "config", "full_steps", "rejected_steps", "denoise_s", "peak_mlx_gb", "cache_mb"]
@@ -97,9 +96,9 @@ def parse_policy(name: str):
     if match := re.fullmatch(r"spectrum-([\d.]+)", name):
         return REUSE_STEPS, Spectrum(growth=float(match[1]))
     if name == "teacache":
-        return REUSE_STEPS, TeaCache()
-    if match := re.fullmatch(r"teacache-([\d.]+)", name):
-        return REUSE_STEPS, TeaCache(threshold=float(match[1]))
+        return REUSE_STEPS, TeaCache(0.11, REUSE_STEPS)
+    if match := re.fullmatch(r"teacache(-taylor)?-([\d.]+)", name):
+        return REUSE_STEPS, TeaCache(float(match[2]), REUSE_STEPS, forecast=bool(match[1]))
     raise ValueError(f"unknown config {name!r}")
 
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import mlx.core as mx
 
-from feature_reuse.reuse import FixedInterval, SpeCa, reuse_blocks
+from feature_reuse.reuse import FixedInterval, SpeCa, TeaCache, reuse_blocks
 
 
 class DoubleBlock:
@@ -312,6 +312,57 @@ class ParseConfigTest(unittest.TestCase):
         for name in ("taylor-3-c0.5", "taylor1-3-c0.5", "taylor3-3-c0.5"):
             with self.assertRaises(ValueError):
                 self.benchmark.parse_config(name)
+
+
+class ModulatedDoubleBlock(DoubleBlock):
+    def norm1(self, hidden_states):
+        return hidden_states
+
+    def __call__(self, *, hidden_states, encoder_hidden_states, temb_mod_params_img):
+        return super().__call__(hidden_states=hidden_states, encoder_hidden_states=encoder_hidden_states)
+
+
+class ModulatedTransformer(Transformer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.transformer_blocks = [ModulatedDoubleBlock()]
+
+    def __call__(self, image: float) -> mx.array:
+        zero = mx.zeros((1, 2))
+        text, image = self.transformer_blocks[0](
+            hidden_states=tokens(image),
+            encoder_hidden_states=tokens(5.0),
+            temb_mod_params_img=((zero, zero, zero), (zero, zero, zero)),
+        )
+        stream = mx.concatenate([text, image], axis=1)
+        for block in self.single_transformer_blocks:
+            stream = block(hidden_states=stream)
+        return stream[:, 2:]
+
+
+class TeaCacheTest(unittest.TestCase):
+    def test_distance_evaluates_polynomial(self) -> None:
+        self.assertAlmostEqual(TeaCache(0.5, 10, coefficients=(2.0, 1.0, 3.0)).distance(0.5), 4.0)
+
+    def test_skips_until_accumulated_change_reaches_threshold(self) -> None:
+        # Each input is 10% larger than the last, so every third step runs in full at threshold 0.25.
+        transformer = ModulatedTransformer()
+        kinds = []
+        with reuse_blocks(transformer, TeaCache(0.25, 8, coefficients=(1.0, 0.0))) as reuse:
+            for step in range(8):
+                run_step(transformer, reuse, step, image=1.1**step, branches=("cond", "uncond"))
+                reuse.confirm_step()
+                kinds.append(reuse.skip)
+        self.assertEqual(kinds, [False, True, True, False, True, True, False, False])
+        self.assertEqual(len(reuse.changes), 7)
+
+    def test_skipped_step_reuses_residual(self) -> None:
+        transformer = ModulatedTransformer()
+        with reuse_blocks(transformer, TeaCache(1.0, 10, coefficients=(1.0, 0.0))) as reuse:
+            run_step(transformer, reuse, 0, image=1.0)
+            output = run_step(transformer, reuse, 1, image=1.0)
+            self.assertTrue(reuse.skip)
+            self.assertTrue(mx.array_equal(output, tokens(17.0)).item())
 
 
 class SpeCaTest(unittest.TestCase):
