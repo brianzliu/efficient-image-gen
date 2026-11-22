@@ -1,5 +1,6 @@
 """Reproducible generation suite. Score images separately with score-evaluation.py."""
 import argparse
+import contextlib
 import gc
 import hashlib
 import importlib.util
@@ -17,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("HF_HOME", str(ROOT / ".cache/huggingface"))
 import mlx.core as mx
 from feature_reuse.klein import SIZE, GUIDANCE, SCHEDULER, MODEL_PATH, load_klein, encode_prompt, denoise, decode
+from feature_reuse.streaming import Streamer, split_mode
 
 spec = importlib.util.spec_from_file_location("benchmark", ROOT / "scripts/benchmark-klein.py")
 benchmark = importlib.util.module_from_spec(spec)
@@ -40,7 +42,9 @@ def main():
     prompts = [p.strip() for p in args.prompts.read_text().splitlines() if p.strip()]
     if not prompts or not args.seeds or args.repeats < 1:
         parser.error("Need prompts, seeds, and positive repeats")
-    configs = {c: benchmark.parse_config(c) for c in args.configs}
+    modes = {c: split_mode(c) for c in args.configs}
+    configs = {c: benchmark.parse_config(modes[c][0]) for c in args.configs}
+    modes = {c: mode for c, (_, mode) in modes.items()}
     for steps, policy, *_ in configs.values():
         if steps < 1 or (hasattr(policy, "interval") and policy.interval < 1):
             parser.error("Steps and reuse intervals must be positive")
@@ -70,6 +74,17 @@ def main():
     warm = encode_prompt(model, prompts[0])
     decode(model, denoise(model, warm, args.seeds[0], 5, SpeCa(0.3, 0.5, 5)).latents)
     del warm
+    # Streaming modes reload weights from per-layer files written once next to the checkpoint.
+    streamer = Streamer(model, MODEL_PATH / "stream") if set(modes.values()) != {"resident"} else None
+    if streamer:
+        streamer.prepare("layer")
+        with streamer.stage("text_encoder", "layer"):
+            warm = encode_prompt(model, prompts[0])
+        with streamer.stage("transformer", "layer"):
+            latents = denoise(model, warm, args.seeds[0], 2).latents
+        with streamer.stage("vae", "layer"):
+            decode(model, latents)
+        del warm, latents
     print("Warmup complete", flush=True)
     trial = 0
     for repeat in range(args.repeats):
@@ -82,14 +97,21 @@ def main():
                     key = f"r{repeat}-p{pid}-s{seed}-{name}"
                     if key in done:
                         continue
+                    mode = modes[name]
+                    stage = streamer.stage if streamer else (lambda part, mode: contextlib.nullcontext())
+                    if streamer:
+                        streamer.prepare(mode)
                     gc.collect(); mx.clear_cache(); mx.synchronize(); mx.reset_peak_memory()
                     started_unix = time.time()
                     start = time.perf_counter()
-                    embeds = encode_prompt(model, prompt)
+                    with stage("text_encoder", mode):
+                        embeds = encode_prompt(model, prompt)
                     encoded = time.perf_counter()
-                    result = denoise(model, embeds, seed, *configs[name])
+                    with stage("transformer", mode):
+                        result = denoise(model, embeds, seed, *configs[name])
                     denoised = time.perf_counter()
-                    image = decode(model, result.latents)
+                    with stage("vae", mode):
+                        image = decode(model, result.latents)
                     mx.synchronize()
                     end = time.perf_counter()
                     ended_unix = time.time()
