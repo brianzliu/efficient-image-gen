@@ -86,11 +86,7 @@ def denoise(
 
         def run(branch: str, encoder_hidden_states: mx.array, ids: mx.array) -> mx.array:
             reuse.branch = branch
-            if not reuse.skip:
-                counts["full"] += 1
-            elif reuse.checking:
-                counts["verification"] += 1
-            return model.transformer(
+            output = model.transformer(
                 hidden_states=latents,
                 encoder_hidden_states=encoder_hidden_states,
                 timestep=scheduler.timesteps[step],
@@ -98,6 +94,12 @@ def denoise(
                 txt_ids=ids,
                 guidance=None,
             )
+            # Count after the call: TeaCache decides whether the step is full inside the first block.
+            if not reuse.skip:
+                counts["full"] += 1
+            elif reuse.checking:
+                counts["verification"] += 1
+            return output
 
         def predict(guided: bool) -> tuple[mx.array, mx.array | None]:
             noise = run("cond", prompt, text_ids)

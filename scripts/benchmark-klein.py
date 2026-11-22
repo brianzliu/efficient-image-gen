@@ -18,7 +18,7 @@ os.environ.setdefault("HF_HOME", str(ROOT / ".cache" / "huggingface"))
 import mlx.core as mx
 
 from feature_reuse.klein import decode, denoise, encode_prompt, load_klein
-from feature_reuse.reuse import FixedInterval, SpeCa
+from feature_reuse.reuse import FixedInterval, SpeCa, TeaCache
 from feature_reuse.guidance import parse_guidance
 from feature_reuse.samplers import SAMPLERS
 
@@ -53,6 +53,8 @@ def parse_policy(name: str):
         return REUSE_STEPS, FixedInterval(int(match[1]), forecast=True)
     if match := re.fullmatch(r"speca-([\d.]+|inf)-([\d.]+)", name):
         return REUSE_STEPS, SpeCa(float(match[1]), float(match[2]), REUSE_STEPS)
+    if match := re.fullmatch(r"teacache(-taylor)?-([\d.]+)", name):
+        return REUSE_STEPS, TeaCache(float(match[2]), REUSE_STEPS, forecast=bool(match[1]))
     if name == "speca-nocheck":
         return REUSE_STEPS, SpeCa(0.3, 0.5, REUSE_STEPS, min_predicted=100)
     raise ValueError(f"unknown config {name!r}")

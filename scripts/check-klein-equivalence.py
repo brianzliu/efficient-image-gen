@@ -10,7 +10,7 @@ import numpy as np
 
 from feature_reuse.klein import GUIDANCE, SCHEDULER, SIZE, decode, denoise, encode_prompt, load_klein
 from feature_reuse.guidance import CosineSwitchOff, Interval
-from feature_reuse.reuse import FixedInterval, SpeCa
+from feature_reuse.reuse import FixedInterval, SpeCa, TeaCache
 
 STEPS = 4
 SEED = 42
@@ -45,6 +45,7 @@ def main() -> int:
         "every step full, fixed == mflux": (image(FixedInterval(1)), expected),
         "every step full, forecast == mflux": (image(FixedInterval(1, forecast=True)), expected),
         "SpeCa warmup only == mflux": (image(SpeCa(float("inf"), 1.0, STEPS, warmup_steps=STEPS)), expected),
+        "TeaCache, zero threshold, forecast == mflux": (image(TeaCache(0.0, STEPS, forecast=True, coefficients=(1.0, 0.0))), expected),
         # Composition: the sampler sees the same velocities when every reuse step runs in full.
         "dpmpp2m, every step full, forecast == dpmpp2m": (image(FixedInterval(1, forecast=True), "dpmpp2m"), dpm),
         "dpmpp2m, SpeCa warmup only == dpmpp2m": (

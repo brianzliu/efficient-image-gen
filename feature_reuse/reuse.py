@@ -37,6 +37,38 @@ class SpeCa:
         return self.base_threshold * self.decay ** (step / self.total_steps)
 
 
+# Fitted for Klein by scripts/calibrate-teacache.py. Highest power first.
+KLEIN_TEACACHE_COEFFICIENTS = (
+    21309.223068516723,
+    -4293.211814252035,
+    287.8941826749216,
+    -7.476169497672445,
+    0.10480946102897497,
+)
+
+
+@dataclass(frozen=True)
+class TeaCache:
+    """Skip blocks until the rescaled input change since the last full step reaches the threshold."""
+
+    threshold: float
+    total_steps: int
+    forecast: bool = False
+    coefficients: tuple[float, ...] = KLEIN_TEACACHE_COEFFICIENTS
+
+    def runs_blocks(self, step: int, predicted: int) -> bool:
+        return step == 0 or step == self.total_steps - 1
+
+    def checks(self, predicted: int) -> bool:
+        return False
+
+    def distance(self, change: float) -> float:
+        total = 0.0
+        for coefficient in self.coefficients:
+            total = total * change + coefficient
+        return total
+
+
 class BlockReuse:
     def __init__(self, policy) -> None:
         self.policy = policy
@@ -54,9 +86,14 @@ class BlockReuse:
         self.stream_in = None
         self.text_tokens = 0
         self.checked_steps = 0
+        self.observed = False
+        self.previous_input = None
+        self.accumulated = 0.0
+        self.changes = []
 
     def begin_step(self, step: int, branches=("cond", "uncond")) -> None:
         self.step = step
+        self.observed = False
         if (
             self.policy is None
             or self.policy.runs_blocks(step, self.predicted)
@@ -87,6 +124,22 @@ class BlockReuse:
                 return False
         self.predicted += 1
         return True
+
+    def observe(self, modulated: mx.array) -> None:
+        # TeaCache decides once per step, from the first branch's input, before any block runs.
+        if self.observed:
+            return
+        self.observed = True
+        if self.previous_input is not None:
+            previous = self.previous_input.astype(mx.float32)
+            change = (mx.mean(mx.abs(modulated.astype(mx.float32) - previous)) / mx.mean(mx.abs(previous))).item()
+            self.changes.append(change)
+            self.accumulated += self.policy.distance(change)
+        self.previous_input = modulated
+        if self.skip and self.accumulated >= self.policy.threshold:
+            self._start_full_step()
+        if not self.skip:
+            self.accumulated = 0.0
 
     def store(self, segment: str, residual: mx.array) -> None:
         key = (self.branch, segment)
@@ -122,6 +175,9 @@ class _DoubleBlock:
         if self.is_first:
             self.reuse.text_tokens = encoder_hidden_states.shape[1]
             self.reuse.stream_in = mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
+            if isinstance(self.reuse.policy, TeaCache):
+                (shift, scale, _), _ = kwargs["temb_mod_params_img"]
+                self.reuse.observe((1 + scale) * self.block.norm1(hidden_states) + shift)
         if self.reuse.skip:
             return encoder_hidden_states, hidden_states
         return self.block(hidden_states=hidden_states, encoder_hidden_states=encoder_hidden_states, **kwargs)
