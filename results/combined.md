@@ -27,6 +27,18 @@ Quality is measured against `full-50+bf16` (all 50 steps, full-precision weights
 
 Means over 15 images. Time is the whole generation. Configs without a weight suffix used `q4` in earlier notes; full metrics are in [combined.csv](combined.csv), where `full-50` means `full-50+bf16`.
 
+## Compared with plain Taylor
+
+Plain `taylor-3` is the earlier best: q4 weights, no streaming. Streaming gives pixel-identical images, so its quality is the same as `taylor-3+q4+layer`.
+
+| | Plain `taylor-3` (q4) | `taylor-3+bf16+layer` |
+|---|---:|---:|
+| Time (s) | ~123 | **117** |
+| Peak memory (GB) | 5.20 | **1.95** |
+| LPIPS vs `full-50+bf16` ↓ | 0.309 | **0.075** |
+
+[teacache.md](teacache.md) lists plain `taylor-3` at LPIPS 0.073, but that was measured against `full-50` with q4 weights. Against `bf16`, the 4-bit weights add far more difference than the Taylor prediction does.
+
 ## Takeaways
 
 - **Best recipe: `taylor-3+bf16+layer`.** Against the old default `full-50+q4`, it is **3.1× faster**, uses **62% less memory** and is much closer to `bf16` (closer on 15 of 15 images).
