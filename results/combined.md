@@ -48,5 +48,5 @@ Plain `taylor-3` is the earlier best: q4 weights, no streaming. Streaming gives 
 
 ## Limitations
 
-- Peak memory doesn't count the operating system's file cache. Each image reads the 7.75 GB weight file 34 times. Here those reads came from the cache. On a machine with less free memory they would come from the SSD, which might be slower.
+- Each image reads the 7.75 GB weight file 34 times. A follow-up showed these reads came from the SSD, not the file cache, so the times above already include them, and they stayed the same with less free memory. See [sweep.md](sweep.md).
 - 512×512 only, 5 prompts × 3 seeds, one machine.
