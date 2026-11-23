@@ -68,6 +68,18 @@ class StreamerTest(unittest.TestCase):
         self.streamer.prepare("stage")
         self.assertGreater(loaded_bytes(self.model.vae.encoder), 0)
 
+    def test_bind_follows_a_swapped_part(self) -> None:
+        replacement = Stack(("transformer_blocks", "single_transformer_blocks"), 2)
+        expected = replacement(self.x)
+        self.streamer.release("transformer")
+        self.model.transformer = replacement
+        self.streamer.bind("transformer", Path(self.tmp.name) / "swapped")
+        self.streamer.prepare("layer")
+        with self.streamer.stage("transformer", "layer"):
+            output = self.model.transformer(self.x)
+        self.assertTrue(mx.array_equal(output, expected).item())
+        self.assertEqual(loaded_bytes(replacement), 0)
+
     def test_split_mode(self) -> None:
         self.assertEqual(split_mode("taylor-3+layer+dpmpp2m"), ("taylor-3+dpmpp2m", "layer"))
         self.assertEqual(split_mode("full-50"), ("full-50", "resident"))

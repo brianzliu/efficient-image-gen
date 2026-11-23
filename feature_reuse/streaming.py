@@ -78,17 +78,26 @@ class Streamer:
     def __init__(self, model, cache_dir: Path) -> None:
         self.model = model
         self.parts = {}
-        for name, layer_keys in LAYERS.items():
-            module = getattr(model, name)
-            rest = Weights(module, cache_dir / f"{name}.safetensors", layer_keys + UNUSED.get(name, ()))
-            layers = {
-                key: [
-                    Weights(layer, cache_dir / f"{name}.{key}.{i}.safetensors")
-                    for i, layer in enumerate(getattr(module, key)[: LAYER_LIMITS.get(key)])
-                ]
-                for key in layer_keys
-            }
-            self.parts[name] = (rest, layers)
+        for name in LAYERS:
+            self.bind(name, cache_dir)
+
+    def bind(self, name: str, cache_dir: Path) -> None:
+        """Track the model's current module for this part, e.g. after swapping in another transformer."""
+        module = getattr(self.model, name)
+        layer_keys = LAYERS[name]
+        rest = Weights(module, cache_dir / f"{name}.safetensors", layer_keys + UNUSED.get(name, ()))
+        layers = {
+            key: [
+                Weights(layer, cache_dir / f"{name}.{key}.{i}.safetensors")
+                for i, layer in enumerate(getattr(module, key)[: LAYER_LIMITS.get(key)])
+            ]
+            for key in layer_keys
+        }
+        self.parts[name] = (rest, layers)
+
+    def release(self, name: str) -> None:
+        """Stop tracking a part so its module can be freed."""
+        self.parts.pop(name, None)
 
     def _weights(self, name: str) -> list[Weights]:
         rest, layers = self.parts[name]
