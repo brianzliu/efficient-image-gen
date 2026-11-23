@@ -1,7 +1,13 @@
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 import mlx.core as mx
+
+
+def _check_curvature_weight(weight: float) -> None:
+    if not math.isfinite(weight):
+        raise ValueError(f"curvature_weight must be finite, got {weight}")
 
 
 @dataclass(frozen=True)
@@ -9,6 +15,11 @@ class FixedInterval:
     interval: int
     forecast: bool = False
     order: int = 1
+    # Scales the second-order term; 1.0 is undamped and 0.0 reduces order 2 to order 1.
+    curvature_weight: float = 1.0
+
+    def __post_init__(self) -> None:
+        _check_curvature_weight(self.curvature_weight)
 
     def runs_blocks(self, step: int, predicted: int) -> bool:
         return step % self.interval == 0
@@ -27,7 +38,11 @@ class SpeCa:
     min_predicted: int = 1
     max_predicted: int = 8
     order: int = 1
+    curvature_weight: float = 1.0
     forecast = True
+
+    def __post_init__(self) -> None:
+        _check_curvature_weight(self.curvature_weight)
 
     def runs_blocks(self, step: int, predicted: int) -> bool:
         return step < self.warmup_steps or predicted >= self.max_predicted
@@ -101,9 +116,16 @@ class BlockReuse:
     def predict(self, segment: str) -> mx.array:
         key = (self.branch, segment)
         prediction, weight = self.factors[key][0], 1
-        for factor, knot in zip(self.factors[key][1:], self.knots[key]):
+        for order, (factor, knot) in enumerate(zip(self.factors[key][1:], self.knots[key]), start=1):
             weight *= self.step - knot
-            prediction = prediction + weight * factor
+            if order == 2:
+                damping = getattr(self.policy, "curvature_weight", 1.0)
+                if damping == 0:
+                    # Skip rather than multiply so a non-finite curvature cannot leak in as 0 * inf.
+                    continue
+                prediction = prediction + (damping * weight) * factor
+            else:
+                prediction = prediction + weight * factor
         return prediction
 
     def record_error(self, predicted: mx.array, actual: mx.array) -> None:

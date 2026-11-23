@@ -24,16 +24,28 @@ REUSE_STEPS = 50
 FIELDS = ["prompt_id", "seed", "config", "full_steps", "rejected_steps", "denoise_s", "peak_mlx_gb", "cache_mb"]
 
 
+def _order_and_damping(name: str, order: str, damping: str | None) -> tuple[int, float]:
+    order = int(order or 1)
+    if damping is None:
+        return order, 1.0
+    if order != 2:
+        raise ValueError(f"curvature damping needs second-order forecasting: {name!r}")
+    return order, float(damping)
+
+
 def parse_config(name: str):
     if match := re.fullmatch(r"full-(\d+)", name):
         return int(match[1]), None
     if match := re.fullmatch(r"fixed-(\d+)", name):
         return REUSE_STEPS, FixedInterval(int(match[1]))
     # An optional digit after "taylor" or "speca" sets the forecast order, e.g. taylor2-3.
-    if match := re.fullmatch(r"taylor([1-9]?)-(\d+)", name):
-        return REUSE_STEPS, FixedInterval(int(match[2]), forecast=True, order=int(match[1] or 1))
-    if match := re.fullmatch(r"speca([1-9]?)-([\d.]+|inf)-([\d.]+)", name):
-        return REUSE_STEPS, SpeCa(float(match[2]), float(match[3]), REUSE_STEPS, order=int(match[1] or 1))
+    # Second order also accepts a curvature damping suffix, e.g. taylor2-3-c0.25.
+    if match := re.fullmatch(r"taylor([1-9]?)-(\d+)(?:-c([\d.]+))?", name):
+        order, damping = _order_and_damping(name, match[1], match[3])
+        return REUSE_STEPS, FixedInterval(int(match[2]), forecast=True, order=order, curvature_weight=damping)
+    if match := re.fullmatch(r"speca([1-9]?)-([\d.]+|inf)-([\d.]+)(?:-c([\d.]+))?", name):
+        order, damping = _order_and_damping(name, match[1], match[4])
+        return REUSE_STEPS, SpeCa(float(match[2]), float(match[3]), REUSE_STEPS, order=order, curvature_weight=damping)
     raise ValueError(f"unknown config {name!r}")
 
 

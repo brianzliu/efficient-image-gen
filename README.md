@@ -44,10 +44,22 @@ Taylor reuse here is first-order extrapolation. The adaptive variants are SpeCa-
 
 Second-order forecasting is available through an order digit in the config name: `taylor2-3` and, for example, `speca2-0.1-0.5`. It adds a curvature term computed from the last three full computations using Newton divided differences, which remain valid when adaptive rejections make the full-step spacing uneven. Before three full computations exist, it falls back to first order. It costs the same full steps as first order and caches one extra feature set per segment and guidance branch. These configs are not part of the default suite; pass them with `--configs`, for example `--configs full-50 full-17 taylor-3 taylor2-3`.
 
+Experimental damped second order scales only the curvature term: `prediction = first_order_prediction + curvature_weight * second_order_correction`. Select it with a `-c<weight>` suffix on a second-order config, for example `taylor2-3-c0.25` or `speca2-0.1-0.5-c0.5`. Unsuffixed names keep weight 1.0, and weight 0 reproduces first-order predictions from the same anchor history. Damping adds no transformer evaluations, but the curvature cache is still stored. `scripts/sweep-curvature.sh` compares weights against `full-50` and first-order `taylor-3`, all on the fixed interval-3 schedule, and finishes with `curvature-summary.md` (LPIPS, SSIM, ImageReward, denoise latency and speedup, full transformer passes). It never writes to `reports/` or `results/`. Modes:
+
+- `quick [OUT_DIR]` screens weights 0, 0.1, 0.25, 0.5, 0.75, and 1.0 on prompt 0 at seed 42 (default `outputs/curvature-quick`, about 40 minutes on an M4).
+- `validate WEIGHT... [--out OUT_DIR]` runs only the selected weights on every prompt (default `outputs/curvature-validate-c<w>_…`).
+- `full [OUT_DIR]` runs all six weights on every prompt (default `outputs/curvature-sweep`, roughly 3–4 hours on an M4).
+- `score OUT_DIR` rescores, reports, and summarizes existing images without generating.
+
+Arguments after `--` go to `evaluate-klein.py`, for example `validate 0.25 -- --seeds 42 43 44`. Each mode records its own experiment label in the identity, so quick-screen and validation results cannot share a directory. Rerunning a directory resumes it: each completed trial is checked against the identity and its image SHA-256 before it is skipped, and an interrupted final line is dropped so that trial reruns. Full-step images are stored in `outputs/baseline-cache` and reused by later experiments only when the prompt text, seed, repeat, step count, size, guidance, scheduler, checkpoint revision, package versions, macOS, chip, and generation source hash all match; a modified cache entry is an error. A reused baseline keeps the latency measured in its original session, and the summary lists where it came from. Pass `-- --no-baseline-cache` to regenerate.
+
+`check-klein-equivalence.py` requires bit-identical pixels between our eager loop and MFLUX's uncompiled path, and only that comparison sets the exit code. It also reports, without failing, the differences from MFLUX's default path, which wraps prediction in `mx.compile` on chips other than M1/M2; fused kernels round FP16 differently, so those images are not pixel-identical. None of these checks forecast, so `tests/test_klein_integration.py` (opt-in with `KLEIN_INTEGRATION=1`) covers second-order forecasting and curvature damping on the real model.
+
 ```sh
 uv pip install --python .venv/bin/python -r requirements-eval.txt
 .venv/bin/python scripts/check-klein-equivalence.py
 .venv/bin/python -m unittest discover -s tests -v
+KLEIN_INTEGRATION=1 .venv/bin/python -m unittest tests.test_klein_integration -v
 .venv/bin/python scripts/evaluate-klein.py --out outputs/evaluation
 uv venv --python 3.11 .venv-quality
 uv pip install --python .venv-quality/bin/python -r requirements-quality.txt
