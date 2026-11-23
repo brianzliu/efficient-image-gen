@@ -29,6 +29,7 @@ def trial_key(repeat: int, prompt_id: int, seed: int, config: str) -> str:
 def baseline_fields(identity: dict, config: str, steps: int, prompt: str, seed: int, repeat: int) -> dict:
     """Cache key material for one full-step trial; a missing identity field is an error."""
     fields = {name: identity[name] for name in BASELINE_IDENTITY_FIELDS}
+    fields["mlx_buffer_env"] = identity.get("mlx_buffer_env", {})
     fields.update(config=config, sampling_steps=steps, prompt=prompt, seed=seed, repeat=repeat)
     return fields
 

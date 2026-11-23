@@ -35,6 +35,12 @@ def main():
     (args.report / "images").mkdir(exist_ok=True)
     for name in ["manifest.json", "scoring.json", "measurements.jsonl", "scores.jsonl"]:
         shutil.copyfile(args.out / name, args.report / name)
+    profile_path = args.out / "profile.json"
+    diagnostics = json.loads(profile_path.read_text()) if identity.get("profile") else None
+    if diagnostics is not None:
+        if diagnostics["configs"].keys() != set(identity["configs"]):
+            raise ValueError("Incomplete profiling results; resume the evaluator")
+        shutil.copyfile(profile_path, args.report / profile_path.name)
     for row in rows:
         shutil.copyfile(args.out / row["image"], args.report / row["image"])
     with (args.report / "results.csv").open("w") as f:
@@ -51,10 +57,11 @@ def main():
         return float(np.mean(vals)) if vals else None
     baseline = mean("full-50", "total_s")
     summaries = []
+    phase_peaks = [f"{phase}_peak_mlx_gb" for phase in ("encode", "denoise", "decode")]
     for name in names:
         item = {"config":name, "n":len(groups[name]), "speedup":baseline/mean(name,"total_s")}
         for field in ["total_s","denoise_s","encode_s","decode_s","peak_mlx_gb","cache_mb","full_steps",
-                      "checked_steps","rejected_steps","lpips","ssim","psnr_db","clip_score","image_reward","energy_j"]:
+                      "checked_steps","rejected_steps","lpips","ssim","psnr_db","clip_score","image_reward","energy_j", *phase_peaks]:
             item[field] = mean(name,field)
         item["min_s"] = min(r["total_s"] for r in groups[name])
         item["max_s"] = max(r["total_s"] for r in groups[name])
@@ -131,8 +138,28 @@ def main():
         "GenEval and human preference are unmeasured. CLIP is a broad alignment proxy and ImageReward, if available, is a learned preference proxy, not a human judgment or a compositional correctness guarantee.","",
         "LPIPS/SSIM/PSNR compare each output with the matching full-50 image. Different but valid images can have poor similarity; higher similarity does not prove higher quality. The full-50 reference can itself contain defects. Identical-image PSNR is represented by null with an explicit identity flag. No FID is computed from this small sample.","",
         "## Reproduction", "", "Use the prompts, seeds, repeat count, and configuration names in the generation manifest. The repository README gives the evaluator, scoring, and reporting commands.", "",
-        "Environment locks: requirements-mac.txt, requirements-eval.txt, requirements-quality.txt. Raw measurements, scoring metadata, the generation manifest, and all pilot outputs accompany this report. Generation and scoring run separately. Hardware telemetry also includes system RAM/swap usage and GPU temperature for diagnosing environmental interference.","",
-        "## Visual inspection", ""]
+        "Environment locks: requirements-mac.txt, requirements-eval.txt, requirements-quality.txt. Raw measurements, scoring metadata, the generation manifest, and generated images accompany this report. Generation and scoring run separately.",""]
+    if any(s["encode_peak_mlx_gb"] is not None for s in summaries):
+        lines += ["## Pipeline memory", "",
+                  "Each column is the mean of per-trial peak MLX allocations with the weights resident.",
+                  "", "| Configuration | Encode GB | Denoise GB | Decode GB |",
+                  "| --- | ---: | ---: | ---: |"]
+        for s in summaries:
+            lines.append("| " + " | ".join([s["config"]] + [fmt(s[key]) for key in phase_peaks]) + " |")
+        lines.append("")
+    if diagnostics is not None:
+        lines += ["## Denoising profile", "",
+                  f"The {diagnostics['mode']} profile replays prompt {diagnostics['prompt_id']} and seed {diagnostics['seed']} "
+                  "once per configuration. It synchronizes the GPU at measured boundaries. These runs are separate from the latency comparison.",
+                  "", "[Per-path timing, calls, estimated MACs, and memory](profile.json)", "",
+                  "| Configuration | Profiled denoise s | Full transformer passes | Single blocks | Double blocks |",
+                  "| --- | ---: | ---: | ---: | ---: |"]
+        for name in names:
+            profile = diagnostics["configs"][name]
+            calls = [profile["paths"].get(f"transformer/{kind}_block", {}).get("calls", 0) for kind in ("single", "double")]
+            lines.append(f"| {name} | {fmt(profile['denoise_s'])} | {profile['full_transformer_passes']} | {calls[0]} | {calls[1]} |")
+        lines.append("")
+    lines += ["## Visual inspection", ""]
     for pid,prompt in enumerate(identity["prompts"]):
         lines += [f"### Prompt {pid}","",prompt,"",f"![Prompt {pid} ablations](prompt-{pid}.jpg)",""]
     if energy_pairs:

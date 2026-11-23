@@ -265,6 +265,7 @@ Calibrate SharpEuler once with development prompts in a separate text file, one 
 .venv/bin/python scripts/evaluate-klein.py \
   --out outputs/acceleration-methods --no-baseline-cache \
   --sharpeuler-profile outputs/sharpeuler-profile.json \
+  --profile blocks \
   --configs full-50 full-17 taylor-3 spectrum sharpeuler-17 vde-4
 
 .venv-quality/bin/python scripts/score-evaluation.py --out outputs/acceleration-methods --image-reward
@@ -274,6 +275,12 @@ Calibrate SharpEuler once with development prompts in a separate text file, one 
 ```
 
 SharpEuler uses plain CFG and Euler, matching its calibration. VDE forecasts the CFG-combined velocity and uses plain CFG. Compare `sampling_steps`, `full_steps`, and `full_transformer_passes` in the measurements to see the work each method performed.
+
+### Profiling the evaluator
+
+Every timed trial records encode, denoise, and decode times, phase peaks and end-of-phase MLX allocations, and the active allocation before generation. Weights stay resident throughout the evaluator. Alan's standalone memory study unloaded the encoder before denoising, so its absolute memory figures describe a different setup. The manifest and baseline cache key record any MLX command-buffer settings in the environment. [Alan's profiling study](results/profile.md)
+
+With `--profile blocks`, the evaluator replays the first selected prompt and seed once per configuration after all timed trials. It records exclusive transformer, double-block, and single-block times, calls, and peak allocation above entry memory. Use `--profile ops` for the finer breakdown, including linear projections, attention, rotary embeddings, and estimated multiply-accumulate counts where available. The GPU synchronization used for profiling changes runtime and can change memory behavior. The evaluator saves these diagnostics in `profile.json` separately from the timed measurements and resumes incomplete profiles by configuration. Omit the flag for a run with phase measurements only.
 
 ## Earlier three-seed benchmark
 

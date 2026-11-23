@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("HF_HOME", str(ROOT / ".cache/huggingface"))
 import mlx.core as mx
 from feature_reuse.klein import CHECKPOINT, CHECKPOINT_REVISION, SIZE, GUIDANCE, SCHEDULER, load_klein, encode_prompt, denoise, decode
+from feature_reuse.profiling import BLOCK_TARGETS, OP_TARGETS, memory_snapshot, profile_summary, profiled
 from feature_reuse.reuse import SpeCa, TeaCache
 from feature_reuse.spectrum import Spectrum
 from feature_reuse.vde import VDE
@@ -35,6 +36,33 @@ def digest_sources():
     return hashlib.sha256(b"".join(p.read_bytes() for p in files)).hexdigest()
 
 
+def run_profiles(model, configs, prompt, seed, path, diagnostics):
+    targets = OP_TARGETS if diagnostics["mode"] == "ops" else BLOCK_TARGETS
+    linear_names = {
+        id(layer): name.rsplit(".", 1)[-1]
+        for name, layer in model.transformer.named_modules()
+    } if diagnostics["mode"] == "ops" else None
+    embeds = encode_prompt(model, prompt)
+    for name in configs:
+        if name in diagnostics["configs"]:
+            continue
+        gc.collect()
+        mx.clear_cache()
+        mx.synchronize()
+        with profiled(targets, linear_names) as profiler:
+            result = denoise(model, embeds, seed, *configs[name])
+        diagnostics["configs"][name] = dict(
+            profile_summary(profiler, result.seconds),
+            sampling_steps=configs[name][0], full_steps=result.full_steps,
+            full_transformer_passes=result.full_passes,
+        )
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(diagnostics, indent=2, allow_nan=False) + "\n")
+        temporary.replace(path)
+        print(f"Profiled {name} ({diagnostics['mode']})", flush=True)
+        del result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=ROOT / "outputs/evaluation")
@@ -50,6 +78,8 @@ def main():
                         help="Shared store of full-step images reused only when every baseline field matches")
     parser.add_argument("--no-baseline-cache", action="store_true")
     parser.add_argument("--sharpeuler-profile", type=Path, help="Calibration JSON from calibrate-sharpeuler.py")
+    parser.add_argument("--profile", choices=("blocks", "ops"),
+                        help="After timed trials, profile the first prompt and seed once per configuration")
     args = parser.parse_args()
     prompts = [p.strip() for p in args.prompts.read_text().splitlines() if p.strip()]
     if args.prompt_ids is not None:
@@ -72,6 +102,11 @@ def main():
                     checkpoint=CHECKPOINT, checkpoint_revision=CHECKPOINT_REVISION,
                     packages={p: version(p) for p in ["mlx", "mflux", "numpy"]},
                     macos=platform.mac_ver()[0], machine=platform.machine(), hardware=hardware)
+    identity["mlx_buffer_env"] = {key: os.environ[key] for key in (
+        "MLX_MAX_OPS_PER_BUFFER", "MLX_MAX_MB_PER_BUFFER", "MLX_BFS_MAX_WIDTH"
+    ) if key in os.environ}
+    if args.profile:
+        identity["profile"] = args.profile
     grids = {name: config[4] for name, config in configs.items() if len(config) == 5}
     if grids:
         identity.update(sharpeuler_profile=profile, sigma_grids=grids)
@@ -86,6 +121,14 @@ def main():
             energy_status="not measured: sudo powermetrics requires authentication",
             timing_scope="resident weights; prompt encoding + denoising + decode; PNG writing excluded"), indent=2))
     path = args.out / "measurements.jsonl"
+    profile_path = args.out / "profile.json"
+    diagnostics = dict(mode=args.profile, prompt_id=0, prompt=prompts[0], seed=args.seeds[0], configs={})
+    if args.profile and profile_path.is_file():
+        saved = json.loads(profile_path.read_text())
+        if (any(saved.get(key) != diagnostics[key] for key in ("mode", "prompt_id", "prompt", "seed"))
+                or not saved["configs"].keys() <= configs.keys()):
+            raise ValueError("Saved profiling rows do not match the experiment")
+        diagnostics = saved
     (args.out / "images").mkdir(exist_ok=True)
     done = load_completed(path, args.out, identity)
     cache = None if args.no_baseline_cache else BaselineCache(args.baseline_cache)
@@ -126,7 +169,8 @@ def main():
         shutil.copyfile(image, args.out / row["image"])
         record(row)
         print(f"{key}: reused cached baseline {cache_key[:12]} (measured {row['total_s']:.2f}s in an earlier session)", flush=True)
-    if not generate:
+    pending_profiles = args.profile and configs.keys() != diagnostics["configs"].keys()
+    if not generate and not pending_profiles:
         return
 
     print("Loading model", flush=True)
@@ -146,16 +190,25 @@ def main():
     for repeat, pid, prompt, seed, name in generate:
         key = trial_key(repeat, pid, seed, name)
         gc.collect(); mx.clear_cache(); mx.synchronize(); mx.reset_peak_memory()
+        active_before = mx.get_active_memory()
         started_unix = time.time()
         start = time.perf_counter()
         embeds = encode_prompt(model, prompt)
         encoded = time.perf_counter()
+        active_encoded, peak_encoded = memory_snapshot()
+        mx.reset_peak_memory()
         result = denoise(model, embeds, seed, *configs[name])
         denoised = time.perf_counter()
+        active_denoised, peak_denoised = memory_snapshot()
+        mx.reset_peak_memory()
         image = decode(model, result.latents)
         mx.synchronize()
         end = time.perf_counter()
         ended_unix = time.time()
+        active_decoded, peak_decoded = memory_snapshot()
+        peak_encoded = max(active_before, peak_encoded)
+        peak_denoised = max(active_encoded, peak_denoised)
+        peak_decoded = max(active_denoised, peak_decoded)
         row = dict(key=key, repeat=repeat, prompt_id=pid, prompt=prompt, seed=seed, config=name,
             total_s=end-start, encode_s=encoded-start, denoise_s=denoised-encoded,
             decode_s=end-denoised, full_steps=result.full_steps,
@@ -163,7 +216,12 @@ def main():
             verification_block_passes=result.verification_passes, guided_steps=result.guided_steps,
             rejected_steps=result.rejected_steps, sampling_steps=configs[name][0],
             accepted_reuse_steps=configs[name][0]-result.full_steps,
-            peak_mlx_gb=mx.get_peak_memory()/1e9, cache_mb=result.cache_bytes/1e6,
+            peak_mlx_gb=max(peak_encoded, peak_denoised, peak_decoded)/1e9,
+            active_before_mlx_gb=active_before/1e9,
+            encode_peak_mlx_gb=peak_encoded/1e9, encode_active_mlx_gb=active_encoded/1e9,
+            denoise_peak_mlx_gb=peak_denoised/1e9, denoise_active_mlx_gb=active_denoised/1e9,
+            decode_peak_mlx_gb=peak_decoded/1e9, decode_active_mlx_gb=active_decoded/1e9,
+            cache_mb=result.cache_bytes/1e6,
             started_unix=started_unix, ended_unix=ended_unix, energy_j=None,
             image=f"images/{key}.png", baseline_cache=None, cached_from=None)
         image.save(args.out / row["image"])
@@ -173,6 +231,8 @@ def main():
             cache.store(fields(repeat, prompt, seed, name), row, args.out / row["image"])
         print(f"{key}: {row['total_s']:.2f}s, {row['full_steps']} full, {row['rejected_steps']} rejected", flush=True)
         del embeds, result, image
+    if pending_profiles:
+        run_profiles(model, configs, prompts[0], args.seeds[0], profile_path, diagnostics)
 
 
 if __name__ == "__main__":
