@@ -243,7 +243,7 @@ bash scripts/sweep-curvature.sh quick
 bash scripts/sweep-curvature.sh validate 0.25 0.5
 ```
 
-## Spectrum, SharpEuler, and TeaCache
+## Spectrum, SharpEuler, and VDE
 
 These configurations use the same pinned Klein Base 4B Q4 checkpoint, 512 × 512 resolution, and scoring pipeline as the pilot.
 
@@ -251,7 +251,9 @@ These configurations use the same pinned Klein Base 4B Q4 checkpoint, 512 × 512
 | --- | --- |
 | `spectrum` or `spectrum-0.33` | Five warmup steps, then an increasing interval between full steps across 50 Euler updates. The degree-four Chebyshev fit uses ridge regularization of 0.1 and forecasts last-block image features separately for each CFG branch. Default growth 0.33 schedules 17 full steps with plain CFG, matching `taylor-3`. [Spectrum paper](https://arxiv.org/abs/2603.01623) |
 | `sharpeuler-17` | Seventeen full steps on a sigma grid calibrated from guided velocities. This implements the paper’s uniform-reference-grid algorithm. Compare with `full-17` to isolate timestep placement. [SharpEuler paper](https://arxiv.org/abs/2605.11547) |
-| `teacache` or `teacache-0.17` | Fifty scheduler updates with a refresh gate based on consecutive timestep-modulated image inputs. The first and last steps run in full. Both CFG branches share a decision and keep separate residuals. The polynomial and default threshold come from the published Klein MLX calibration. [TeaCache paper](https://arxiv.org/abs/2411.19108) · [Klein calibration](https://github.com/IonDen/mlx-teacache/blob/main/docs/variants/flux2-klein-base-4b.md) |
+| `vde-4` | Seven warmup steps, then a full step every four updates, with a full final step. This uses 18 full steps across 50 updates. In between, VDE extrapolates the guided velocity from the two most recent full steps using the current latent. [VDE paper](https://arxiv.org/abs/2605.23381) |
+
+Alan's calibrated TeaCache is available as `teacache-0.11` and `teacache-taylor-0.11`. [Klein TeaCache results](results/teacache.md)
 
 Calibrate SharpEuler once with development prompts in a separate text file, one per line. Use different prompts in the benchmark when measuring generalization. The runner records the calibration and exact sigma grid in the manifest. Calibration time is outside the generation measurements.
 
@@ -263,7 +265,7 @@ Calibrate SharpEuler once with development prompts in a separate text file, one 
 .venv/bin/python scripts/evaluate-klein.py \
   --out outputs/acceleration-methods --no-baseline-cache \
   --sharpeuler-profile outputs/sharpeuler-profile.json \
-  --configs full-50 full-17 taylor-3 spectrum sharpeuler-17 teacache
+  --configs full-50 full-17 taylor-3 spectrum sharpeuler-17 vde-4
 
 .venv-quality/bin/python scripts/score-evaluation.py --out outputs/acceleration-methods --image-reward
 .venv/bin/python scripts/report-evaluation.py --out outputs/acceleration-methods \
@@ -271,7 +273,7 @@ Calibrate SharpEuler once with development prompts in a separate text file, one 
 .venv/bin/python scripts/validate-evaluation.py --report outputs/acceleration-report
 ```
 
-SharpEuler configurations use plain CFG and Euler, matching their calibration. Spectrum and TeaCache accept the sampler and guidance suffixes described above. Compare `sampling_steps`, `full_steps`, and `full_transformer_passes` in the measurements to see the work each method performed.
+SharpEuler uses plain CFG and Euler, matching its calibration. VDE forecasts the CFG-combined velocity and uses plain CFG. Compare `sampling_steps`, `full_steps`, and `full_transformer_passes` in the measurements to see the work each method performed.
 
 ## Earlier three-seed benchmark
 

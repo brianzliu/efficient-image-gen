@@ -1,6 +1,8 @@
 import runpy
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import mlx.core as mx
 import numpy as np
@@ -8,6 +10,8 @@ import numpy as np
 from feature_reuse.sharpeuler import sigma_grid
 from feature_reuse.spectrum import SpectralForecast, Spectrum
 from feature_reuse.reuse import TeaCache
+from feature_reuse.vde import VDE, VelocityEstimator
+from feature_reuse.klein import Flux2LatentCreator, ModelConfig, denoise
 
 
 class SpectrumTest(unittest.TestCase):
@@ -44,12 +48,49 @@ class SharpEulerTest(unittest.TestCase):
                 sigma_grid(17, profile)
 
 
+class VDETest(unittest.TestCase):
+    def test_full_steps_and_endpoints(self):
+        policy = VDE()
+        anchors = [step for step in range(50) if policy.runs_model(step, 50)]
+        self.assertEqual(anchors, [*range(7), *range(10, 47, 4), 49])
+
+    def test_estimates_velocity_at_current_latent(self):
+        estimator = VelocityEstimator()
+        estimator.observe(1.0, mx.array([[[1., 0.]]]), mx.array([[[2., 3.]]]))
+        estimator.observe(0.75, mx.array([[[2., 0.]]]), mx.array([[[6., 8.]]]))
+        actual = estimator.predict(0.5, mx.array([[[3., 0.]]]))
+        np.testing.assert_allclose(np.asarray(actual), [[[12., 15.]]])
+
+    def test_parallel_and_zero_velocity_stay_finite(self):
+        estimator = VelocityEstimator()
+        latent = mx.array([[[2., 0.]]])
+        estimator.observe(1.0, latent, latent)
+        estimator.observe(0.75, latent, mx.zeros_like(latent))
+        np.testing.assert_allclose(np.asarray(estimator.predict(0.5, latent)), [[[-2., 0.]]])
+
+    def test_skips_both_cfg_passes_between_anchors(self):
+        latent = mx.array([[[1., 2.]]])
+        transformer = Mock(side_effect=lambda **kwargs: kwargs["hidden_states"] * 0.1)
+        model = SimpleNamespace(transformer=transformer, model_config=ModelConfig.flux2_klein_base_4b())
+        velocities = []
+        with patch.object(Flux2LatentCreator, "prepare_packed_latents", return_value=(latent, latent, None, None)):
+            result = denoise(model, (latent,) * 4, 42, 6, VDE(interval=3, warmup=2),
+                             observe_velocity=velocities.append)
+        self.assertEqual((result.full_steps, result.full_passes, result.guided_steps), (4, 8, 6))
+        self.assertEqual(transformer.call_count, 8)
+        self.assertEqual(len(velocities), 6)
+        self.assertTrue(mx.all(mx.isfinite(result.latents)).item())
+
+
 class AccelerationConfigTest(unittest.TestCase):
     def test_new_names_and_calibration_requirement(self):
         script = Path(__file__).resolve().parents[1] / "scripts" / "benchmark-klein.py"
         parse = runpy.run_path(str(script))["parse_config"]
         self.assertIsInstance(parse("spectrum+unipc")[1], Spectrum)
         self.assertEqual(parse("teacache-0.18")[1], TeaCache(0.18, 50))
+        self.assertEqual(parse("vde-4")[1], VDE())
+        with self.assertRaisesRegex(ValueError, "plain CFG"):
+            parse("vde-4+ag-0.9")
         with self.assertRaisesRegex(ValueError, "--sharpeuler-profile"):
             parse("sharpeuler-17")
         profile = {"sharpness": [1.0] * 8}

@@ -23,6 +23,7 @@ from feature_reuse.guidance import parse_guidance
 from feature_reuse.samplers import SAMPLERS
 from feature_reuse.sharpeuler import sigma_grid
 from feature_reuse.spectrum import Spectrum
+from feature_reuse.vde import VDE
 
 REUSE_STEPS = 50
 FIELDS = ["prompt_id", "seed", "config", "full_steps", "rejected_steps", "denoise_s", "peak_mlx_gb", "cache_mb"]
@@ -73,7 +74,10 @@ def parse_config(name: str, profile=None):
             raise ValueError("SharpEuler calibration uses Euler and plain CFG")
         steps = int(match[1])
         return steps, None, "euler", parse_guidance("cfg"), sigma_grid(steps, profile["sharpness"])
-    return (*parse_policy(base), sampler or "euler", guidance or parse_guidance("cfg"))
+    steps, policy = parse_policy(base)
+    if isinstance(policy, VDE) and guidance not in (None, parse_guidance("cfg")):
+        raise ValueError("VDE forecasts a single velocity field and requires plain CFG")
+    return steps, policy, sampler or "euler", guidance or parse_guidance("cfg")
 
 
 def parse_policy(name: str):
@@ -95,6 +99,8 @@ def parse_policy(name: str):
         return REUSE_STEPS, Spectrum()
     if match := re.fullmatch(r"spectrum-([\d.]+)", name):
         return REUSE_STEPS, Spectrum(growth=float(match[1]))
+    if match := re.fullmatch(r"vde-(\d+)", name):
+        return REUSE_STEPS, VDE(interval=int(match[1]))
     if name == "teacache":
         return REUSE_STEPS, TeaCache(0.11, REUSE_STEPS)
     if match := re.fullmatch(r"teacache(-taylor)?-([\d.]+)", name):

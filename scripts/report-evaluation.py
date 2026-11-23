@@ -111,6 +111,8 @@ def main():
         lines += ["The SpeCa configurations use a simplified final-block verification heuristic.", ""]
     if any(name.startswith("spectrum") for name in names):
         lines += ["Spectrum forecasts last-block image features with a Chebyshev fit updated on full steps.", ""]
+    if any(name.startswith("vde-") for name in names):
+        lines += ["VDE predicts the guided velocity between full transformer steps using the current latent and the two most recent full predictions.", ""]
     if any(name.startswith("teacache") for name in names):
         lines += ["TeaCache reuses a transformer residual when accumulated input changes stay below the configured threshold.", ""]
     if "sharpeuler_profile" in identity:

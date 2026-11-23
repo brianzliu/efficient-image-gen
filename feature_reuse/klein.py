@@ -13,6 +13,7 @@ from mflux.utils.image_util import ImageUtil
 from feature_reuse.guidance import AlwaysOn
 from feature_reuse.reuse import reuse_blocks
 from feature_reuse.samplers import make_sampler
+from feature_reuse.vde import VDE, VelocityEstimator
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "klein-base-4b-q4"
 CHECKPOINT = "mflux-community/flux-2-klein-base-4b-mflux-q4"
@@ -33,7 +34,7 @@ class Denoised:
     # Transformer passes per branch, counting both CFG branches where they ran.
     full_passes: int = 0
     verification_passes: int = 0
-    # Steps whose velocity used the unconditional branch.
+    # Steps whose velocity used CFG, including predictions of a CFG-combined velocity.
     guided_steps: int = 0
 
 
@@ -82,6 +83,10 @@ def denoise(
     timesteps = scheduler.timesteps if sigma_grid is None else sigma_array[:-1]
     solver = make_sampler(sampler, sigma_array)
     guide = (guidance or AlwaysOn()).begin()
+    vde = policy if isinstance(policy, VDE) else None
+    if vde is not None and not isinstance(guide, AlwaysOn):
+        raise ValueError("VDE forecasts a single velocity field and requires plain CFG")
+    estimator = VelocityEstimator() if vde is not None else None
     sigmas = sigma_array.tolist()
     counts = dict(full=0, verification=0, guided=0)
     latents, latent_ids, _, _ = Flux2LatentCreator.prepare_packed_latents(
@@ -90,7 +95,7 @@ def denoise(
     mx.eval(latents, latent_ids)
     seconds = 0.0
 
-    with reuse_blocks(model.transformer, policy, sigmas) as reuse:
+    with reuse_blocks(model.transformer, None if vde is not None else policy, sigmas) as reuse:
 
         def run(branch: str, encoder_hidden_states: mx.array, ids: mx.array) -> mx.array:
             reuse.branch = branch
@@ -117,23 +122,30 @@ def denoise(
         for step in range(steps):
             start = perf_counter()
             guided = guide.wants_uncond(step, sigmas[step])
-            reuse.begin_step(step, ("cond", "uncond") if guided else ("cond",))
-            noise, negative_noise = predict(guided)
-            if not reuse.confirm_step():
+            counts["guided"] += int(guided)
+            if vde is not None and not vde.runs_model(step, steps):
+                noise = estimator.predict(sigmas[step], latents)
+            else:
+                reuse.begin_step(step, ("cond", "uncond") if guided else ("cond",))
                 noise, negative_noise = predict(guided)
-            if guided:
-                counts["guided"] += 1
-                # Decide later steps from computed outputs only, never from reused predictions.
-                if not reuse.skip:
-                    guide.observe(noise, negative_noise)
-                noise = negative_noise + GUIDANCE * (noise - negative_noise)
+                if not reuse.confirm_step():
+                    noise, negative_noise = predict(guided)
+                if guided:
+                    # Decide later steps from computed outputs only, never from reused predictions.
+                    if not reuse.skip:
+                        guide.observe(noise, negative_noise)
+                    noise = negative_noise + GUIDANCE * (noise - negative_noise)
+                if estimator is not None:
+                    estimator.observe(sigmas[step], latents, noise)
             if observe_velocity is not None:
                 observe_velocity(noise)
             latents = solver.step(noise, step, latents)
-            mx.eval(latents, *reuse.arrays())
+            cached = estimator.arrays() if estimator is not None else reuse.arrays()
+            mx.eval(latents, *cached)
             seconds += perf_counter() - start
 
-        cache_bytes = sum(array.nbytes for array in reuse.arrays())
+        cached = estimator.arrays() if estimator is not None else reuse.arrays()
+        cache_bytes = sum(array.nbytes for array in cached)
         return Denoised(
             latents,
             seconds,
