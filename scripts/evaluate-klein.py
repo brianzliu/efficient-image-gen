@@ -24,6 +24,7 @@ from feature_reuse.reuse import SpeCa, TeaCache
 from feature_reuse.spectrum import Spectrum
 from feature_reuse.streaming import Streamer, split_mode
 from feature_reuse.svdquant import load_transformer, parse_variant, split_variant
+from feature_reuse.toma import split_toma, token_merging
 from feature_reuse.vde import VDE
 from evaluation.experiment import BaselineCache, baseline_fields, load_completed, sha256_file, trial_key
 
@@ -102,7 +103,8 @@ def main():
     try:
         parse_variant(args.transformer)
         # "+bf16"/"+svdq-32" pick the transformer and "+stage"/"+layer" pick streaming; the rest is the method.
-        variants = {c: split_variant(c, args.transformer) for c in args.configs}
+        tomas = {c: split_toma(c) for c in args.configs}
+        variants = {c: split_variant(tomas[c][0], args.transformer) for c in args.configs}
         modes = {c: split_mode(variants[c][0]) for c in args.configs}
         profile = benchmark.load_sharpeuler_profile(args.sharpeuler_profile)
         configs = {c: benchmark.parse_config(modes[c][0], profile) for c in args.configs}
@@ -110,9 +112,10 @@ def main():
         parser.error(str(error))
     modes = {c: mode for c, (_, mode) in modes.items()}
     variants = {c: variant for c, (_, variant) in variants.items()}
+    tomas = {c: ratio for c, (_, ratio) in tomas.items()}
     # The default Q4 transformer is the one load_klein reads; other variants come from build-svdquant.py.
     swaps = set(variants.values()) != {"q4"}
-    if args.profile and (swaps or set(modes.values()) != {"resident"}):
+    if args.profile and (swaps or set(modes.values()) != {"resident"} or any(tomas.values())):
         parser.error("--profile supports only resident Q4 configs")
     for steps, policy, *_ in configs.values():
         if steps < 1 or (hasattr(policy, "interval") and policy.interval < 1):
@@ -216,6 +219,9 @@ def main():
         denoise(model, warm, args.seeds[0], 3, TeaCache(0.11, 3))
     if VDE in remaining_policies:
         denoise(model, warm, args.seeds[0], 4, VDE(warmup=2))
+    for setting in sorted({tomas[name] for *_, name in generate} - {None}):
+        with token_merging(model.transformer, setting):
+            denoise(model, warm, args.seeds[0], 3)
     del warm
     # Streaming modes reload weights from per-layer files written once next to the checkpoint.
     streamer = Streamer(model, MODEL_PATH / "stream") if set(modes.values()) != {"resident"} else None
@@ -265,7 +271,7 @@ def main():
         encoded = time.perf_counter()
         active_encoded, peak_encoded = memory_snapshot()
         mx.reset_peak_memory()
-        with stage("transformer", mode):
+        with stage("transformer", mode), token_merging(model.transformer, tomas[name]):
             result = denoise(model, embeds, seed, *configs[name])
         denoised = time.perf_counter()
         active_denoised, peak_denoised = memory_snapshot()
