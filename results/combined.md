@@ -14,18 +14,18 @@ What happens when we combine the three methods on FLUX.2 Klein?
 
 ## Results
 
-Quality is measured against `full-50` with `bf16` weights (all 50 steps, full precision). **LPIPS** is perceptual difference (0 = same, lower is better).
+Quality is measured against `full-50+bf16` (all 50 steps, full-precision weights). **LPIPS** is perceptual difference (0 = same, lower is better).
 
 | Config | Time (s) | Speedup | Peak memory (GB) | LPIPS ↓ | ImageReward ↑ |
 |---|---:|---:|---:|---:|---:|
-| `full-50` (bf16, reference) | 338 | 1.00× | 10.77 | 0 | 1.47 |
+| `full-50+bf16` (reference) | 338 | 1.00× | 10.77 | 0 | 1.47 |
 | `full-50+q4` (old default) | 359 | 0.94× | 5.20 | 0.310 | 1.45 |
 | `taylor-3+q4+layer` | 123 | 2.74× | 0.96 | 0.309 | 1.44 |
 | `taylor-3+svdq-128+layer` | 129 | 2.62× | 1.22 | 0.270 | 1.36 |
 | `taylor-3+q8+layer` | 131 | 2.59× | 1.30 | 0.104 | 1.41 |
 | **`taylor-3+bf16+layer`** | **117** | **2.90×** | **1.95** | **0.075** | 1.43 |
 
-Means over 15 images. Time is the whole generation. Full metrics are in [combined.csv](combined.csv).
+Means over 15 images. Time is the whole generation. Configs without a weight suffix used `q4` in earlier notes; full metrics are in [combined.csv](combined.csv), where `full-50` means `full-50+bf16`.
 
 ## Takeaways
 
