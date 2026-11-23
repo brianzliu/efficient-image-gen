@@ -19,6 +19,14 @@ os.environ.setdefault("HF_HOME", str(ROOT / ".cache/huggingface"))
 import mlx.core as mx
 from feature_reuse.klein import SIZE, GUIDANCE, SCHEDULER, MODEL_PATH, load_klein, encode_prompt, denoise, decode
 from feature_reuse.streaming import Streamer, split_mode
+from feature_reuse.svdquant import load_transformer, parse_variant, split_variant
+
+VARIANTS = ROOT / "models/klein-base-4b-bf16/variants"
+
+
+def stream_dir(variant):
+    # Per-layer weight files for streaming, one set per transformer variant.
+    return MODEL_PATH / "stream" if variant == "q4" else VARIANTS / f"stream-{variant}"
 
 spec = importlib.util.spec_from_file_location("benchmark", ROOT / "scripts/benchmark-klein.py")
 benchmark = importlib.util.module_from_spec(spec)
@@ -38,18 +46,24 @@ def main():
     parser.add_argument("--configs", nargs="+", default=DEFAULTS)
     parser.add_argument("--seeds", nargs="+", type=int, default=[42])
     parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument("--transformer", default="q4", help="variant for configs without +bf16, +q4 or +svdq-N")
     args = parser.parse_args()
     prompts = [p.strip() for p in args.prompts.read_text().splitlines() if p.strip()]
     if not prompts or not args.seeds or args.repeats < 1:
         parser.error("Need prompts, seeds, and positive repeats")
-    modes = {c: split_mode(c) for c in args.configs}
+    parse_variant(args.transformer)
+    variants = {c: split_variant(c, args.transformer) for c in args.configs}
+    modes = {c: split_mode(variants[c][0]) for c in args.configs}
     configs = {c: benchmark.parse_config(modes[c][0]) for c in args.configs}
     modes = {c: mode for c, (_, mode) in modes.items()}
+    variants = {c: variant for c, (_, variant) in variants.items()}
+    # The default Q4 transformer is the one load_klein reads; other variants come from build-svdquant.py.
+    swaps = set(variants.values()) != {"q4"}
     for steps, policy, *_ in configs.values():
         if steps < 1 or (hasattr(policy, "interval") and policy.interval < 1):
             parser.error("Steps and reuse intervals must be positive")
     identity = dict(prompts=prompts, seeds=args.seeds, repeats=args.repeats, configs=args.configs,
-                    size=SIZE, guidance=GUIDANCE, scheduler=SCHEDULER, source_sha256=digest_sources(),
+                    size=SIZE, guidance=GUIDANCE, transformer=args.transformer, scheduler=SCHEDULER, source_sha256=digest_sources(),
                     checkpoint="mflux-community/flux-2-klein-base-4b-mflux-q4",
                     checkpoint_revision="f69aa0b43285d0db24695ba68faabbdb1a0ad016",
                     packages={p: version(p) for p in ["mlx", "mflux", "numpy"]},
@@ -85,6 +99,21 @@ def main():
         with streamer.stage("vae", "layer"):
             decode(model, latents)
         del warm, latents
+
+    def swap(variant):
+        if streamer:
+            streamer.release("transformer")
+        load_transformer(model, variant, VARIANTS)
+        if streamer:
+            streamer.bind("transformer", stream_dir(variant))
+            streamer.prepare("resident")
+
+    current = "q4"
+    if swaps:
+        for variant in sorted(set(variants.values())):
+            swap(variant)
+            denoise(model, encode_prompt(model, prompts[0]), args.seeds[0], 2)
+            current = variant
     print("Warmup complete", flush=True)
     trial = 0
     for repeat in range(args.repeats):
@@ -98,6 +127,9 @@ def main():
                     if key in done:
                         continue
                     mode = modes[name]
+                    if variants[name] != current:
+                        swap(variants[name])
+                        current = variants[name]
                     stage = streamer.stage if streamer else (lambda part, mode: contextlib.nullcontext())
                     if streamer:
                         streamer.prepare(mode)
