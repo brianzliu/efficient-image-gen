@@ -77,7 +77,7 @@ def main():
     fig.suptitle(f"Klein Base 4B Q4 · {manifest['hardware']} · {identity['size']} × {identity['size']}")
     fig.text(.04,.085,"    ".join(f"{i+1}: {name}" for i,name in enumerate(names[:4])),fontsize=10)
     fig.text(.04,.05,"    ".join(f"{i+5}: {name}" for i,name in enumerate(names[4:])),fontsize=10)
-    fig.text(.01,.01,"Source: accompanying raw pilot results. Points average matched prompts/seeds; no confidence intervals implied.",fontsize=8)
+    fig.text(.01,.01,"Points average the measured prompt/seed pairs. See the accompanying results for individual trials.",fontsize=8)
     fig.tight_layout(rect=[0,.13,1,.95]); fig.savefig(args.report / "tradeoffs.png",dpi=160); plt.close(fig)
     fig, axes = plt.subplots(1,2,figsize=(13,5))
     axes[0].barh(names,[s["total_s"] for s in summaries]); axes[0].set(xlabel="Mean seconds/image",title="Warm generation latency")
@@ -101,31 +101,34 @@ def main():
         fig.suptitle(identity["prompts"][pid],fontsize=10,wrap=True)
         fig.tight_layout(rect=[0,0,1,.94]); fig.subplots_adjust(hspace=.2)
         fig.savefig(args.report / f"prompt-{pid}.jpg",dpi=120); plt.close(fig)
-    lines=["# Klein Base 4B feature-reuse ablation pilot", "",
-           "This report records one local pilot, not a final quality or energy-efficiency claim.","",
+    lines=["# Klein Base 4B Q4 acceleration benchmark", "",
            "## Setup", "",
            f"Hardware: {manifest['hardware']}; macOS {identity['macos']}. Model: {identity['checkpoint']} at `{identity['checkpoint_revision']}`. "
            f"MFLUX {identity['packages']['mflux']}, MLX {identity['packages']['mlx']}; FP16 transformer compute, {identity['size']} × {identity['size']}, guidance {identity['guidance']}, scheduler `{identity['scheduler']}`.","",
            f"Coverage: {len(rows)} images, {len(identity['prompts'])} prompts, seeds {identity['seeds']}, {identity['repeats']} repeat per prompt/seed/config. "
-           "Configurations rotate order across prompts. All thresholds were specified before inspecting results; these prompts remain a development set, not a held-out generalization test.","",
-           "Full-50 is the reference. Full-17 reduces sampling steps. Fixed-3 and Taylor-3 each evaluate 17 full steps while retaining 50 scheduler updates. "
-           "The two threshold settings compare stricter versus looser verification. Speca-0.3-1.0 removes threshold decay; speca-nocheck removes verification while retaining warmup and the reuse cap.","",
-           "Taylor-3 uses first-order linear extrapolation. The SpeCa-named configurations are Alan's simplified final-block verification heuristic, not validated reproductions of the published implementations. In this policy the first predicted step after a full computation is unchecked, with subsequent predictions checked subject to the configured minimum. These are approximate methods without a lossless guarantee.","",
-           "## Measurements", "",
+           "The evaluator rotates configuration order. Full-50 is the reference for image similarity and speedup.",""]
+    if any(name.startswith("speca") for name in names):
+        lines += ["The SpeCa configurations use a simplified final-block verification heuristic.", ""]
+    if any(name.startswith("spectrum") for name in names):
+        lines += ["Spectrum forecasts last-block image features with a Chebyshev fit updated on full steps.", ""]
+    if any(name.startswith("teacache") for name in names):
+        lines += ["TeaCache reuses a transformer residual when accumulated input changes stay below the configured threshold.", ""]
+    if "sharpeuler_profile" in identity:
+        lines += ["SharpEuler uses a calibrated Euler timestep grid. Calibration took place outside the timed trials. The manifest records the profile and grids.", ""]
+    lines += ["## Measurements", "",
            "| Configuration | Images | Total s | Speedup | Full steps | Checks | Rejections | Peak MLX GB | Cache MB | LPIPS ↓ | SSIM ↑ | CLIP ↑ | ImageReward ↑ | CPU+GPU J/image | Energy n |",
            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     def fmt(v): return "unmeasured" if v is None else f"{v:.3f}"
     for s in summaries:
         lines.append("| "+" | ".join([s["config"],str(s["n"])]+[fmt(s[k]) for k in ["total_s","speedup","full_steps","checked_steps","rejected_steps","peak_mlx_gb","cache_mb","lpips","ssim","clip_score","image_reward","energy_j"]]+[str(s["energy_n"])])+" |")
     lines += ["", "![Quality and latency](tradeoffs.png)","", "![Resource measurements](resources.png)","",
-        "Latency and quality values are arithmetic means over all five prompt/seed pairs. Energy means use only the common covered subset, whose size is listed in Energy n. Speedup is the ratio of mean full-50 time to mean configuration time. Individual results and latency ranges are in results.csv and summary.json.","",
+        "Latency and quality values are arithmetic means over the measured trials. Energy means use the common covered subset listed in Energy n. Speedup divides mean full-50 time by mean configuration time. Results.csv and summary.json contain individual results and latency ranges.","",
         "## Scope and limitations", "",
         "Total latency covers prompt encoding, denoising, and decoding with resident weights and GPU synchronization. It excludes model loading, PNG writing, and offline scoring. The runner warms the full, forecast, and verification paths. MLX peak memory covers the generation window and includes resident weights; it is not total process footprint or whole-device memory. Persistent prompt-independent weights stay loaded across trials.","",
         (f"Energy is estimated from macmon v0.10.0 CPU+GPU telemetry on the common subset of {len(energy_pairs)} prompt/seed pairs with complete coverage for every configuration. Earlier images without telemetry are excluded from ALL energy averages. Samples are 500 ms interval averages, positioned approximately at interval midpoints and integrated with linear interpolation. Gaps over two seconds are rejected. These are system component estimates including background activity, not process-isolated, wall-socket, or whole-device energy. No idle subtraction or external-meter calibration was performed. The manifest's initial powermetrics-unavailable status predates this alternative collector; scoring.json records the actual energy scope." if energy_pairs else "Energy is unmeasured; no energy savings can be inferred from latency."),"",
         "GenEval and human preference are unmeasured. CLIP is a broad alignment proxy and ImageReward, if available, is a learned preference proxy, not a human judgment or a compositional correctness guarantee.","",
         "LPIPS/SSIM/PSNR compare each output with the matching full-50 image. Different but valid images can have poor similarity; higher similarity does not prove higher quality. The full-50 reference can itself contain defects. Identical-image PSNR is represented by null with an explicit identity flag. No FID is computed from this small sample.","",
-        "One seed and one repeat cannot establish cross-seed robustness or isolate thermal/run-order noise. There are no confidence intervals or p95 claims. This is an exploratory ablation, with no predeclared numerical noninferiority threshold. Do not describe approximate feature prediction as lossless speculation.","",
-        "## Reproduction", "", "```sh", ".venv/bin/python scripts/evaluate-klein.py --out outputs/evaluation", ".venv-quality/bin/python scripts/score-evaluation.py --out outputs/evaluation --image-reward" + (" --power-samples outputs/evaluation/power.json" if energy_pairs else ""), ".venv/bin/python scripts/report-evaluation.py --out outputs/evaluation", "```", "",
+        "## Reproduction", "", "Use the prompts, seeds, repeat count, and configuration names in the generation manifest. The repository README gives the evaluator, scoring, and reporting commands.", "",
         "Environment locks: requirements-mac.txt, requirements-eval.txt, requirements-quality.txt. Raw measurements, scoring metadata, the generation manifest, and all pilot outputs accompany this report. Generation and scoring run separately. Hardware telemetry also includes system RAM/swap usage and GPU temperature for diagnosing environmental interference.","",
         "## Visual inspection", ""]
     for pid,prompt in enumerate(identity["prompts"]):

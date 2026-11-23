@@ -17,7 +17,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("HF_HOME", str(ROOT / ".cache/huggingface"))
 import mlx.core as mx
-from feature_reuse.klein import SIZE, GUIDANCE, SCHEDULER, MODEL_PATH, load_klein, encode_prompt, denoise, decode
+from feature_reuse.klein import CHECKPOINT, CHECKPOINT_REVISION, SIZE, GUIDANCE, SCHEDULER, load_klein, encode_prompt, denoise, decode
+from feature_reuse.reuse import SpeCa
+from feature_reuse.spectrum import Spectrum
+from feature_reuse.teacache import TeaCache
 from evaluation.experiment import BaselineCache, baseline_fields, load_completed, sha256_file, trial_key
 
 spec = importlib.util.spec_from_file_location("benchmark", ROOT / "scripts/benchmark-klein.py")
@@ -46,6 +49,7 @@ def main():
     parser.add_argument("--baseline-cache", type=Path, default=ROOT / "outputs/baseline-cache",
                         help="Shared store of full-step images reused only when every baseline field matches")
     parser.add_argument("--no-baseline-cache", action="store_true")
+    parser.add_argument("--sharpeuler-profile", type=Path, help="Calibration JSON from calibrate-sharpeuler.py")
     args = parser.parse_args()
     prompts = [p.strip() for p in args.prompts.read_text().splitlines() if p.strip()]
     if args.prompt_ids is not None:
@@ -54,17 +58,23 @@ def main():
         prompts = [prompts[i] for i in args.prompt_ids]
     if not prompts or not args.seeds or args.repeats < 1:
         parser.error("Need prompts, seeds, and positive repeats")
-    configs = {c: benchmark.parse_config(c) for c in args.configs}
+    try:
+        profile = benchmark.load_sharpeuler_profile(args.sharpeuler_profile)
+        configs = {c: benchmark.parse_config(c, profile) for c in args.configs}
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
     for steps, policy, *_ in configs.values():
         if steps < 1 or (hasattr(policy, "interval") and policy.interval < 1):
             parser.error("Steps and reuse intervals must be positive")
     hardware = subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"], text=True).strip()
     identity = dict(experiment=args.experiment, prompts=prompts, seeds=args.seeds, repeats=args.repeats, configs=args.configs,
                     size=SIZE, guidance=GUIDANCE, scheduler=SCHEDULER, source_sha256=digest_sources(),
-                    checkpoint="mflux-community/flux-2-klein-base-4b-mflux-q4",
-                    checkpoint_revision="f69aa0b43285d0db24695ba68faabbdb1a0ad016",
+                    checkpoint=CHECKPOINT, checkpoint_revision=CHECKPOINT_REVISION,
                     packages={p: version(p) for p in ["mlx", "mflux", "numpy"]},
                     macos=platform.mac_ver()[0], machine=platform.machine(), hardware=hardware)
+    grids = {name: config[4] for name, config in configs.items() if len(config) == 5}
+    if grids:
+        identity.update(sharpeuler_profile=profile, sigma_grids=grids)
     args.out.mkdir(parents=True, exist_ok=True)
     manifest = args.out / "manifest.json"
     if manifest.exists() and json.loads(manifest.read_text())["identity"] != identity:
@@ -100,7 +110,8 @@ def main():
 
     def fields(repeat, prompt, seed, name):
         steps, policy, *_ = configs[name]
-        return baseline_fields(identity, name, steps, prompt, seed, repeat) if cache and policy is None else None
+        if cache and policy is None and name not in grids:
+            return baseline_fields(identity, name, steps, prompt, seed, repeat)
 
     generate = []
     for repeat, pid, prompt, seed, name in pending:
@@ -121,9 +132,13 @@ def main():
     print("Loading model", flush=True)
     model = load_klein()
     # Exercise full, forecast, and verification paths before measured runs.
-    from feature_reuse.reuse import SpeCa
     warm = encode_prompt(model, prompts[0])
     decode(model, denoise(model, warm, args.seeds[0], 5, SpeCa(0.3, 0.5, 5)).latents)
+    remaining_policies = {type(configs[name][1]) for *_, name in generate}
+    if Spectrum in remaining_policies:
+        denoise(model, warm, args.seeds[0], 7, Spectrum())
+    if TeaCache in remaining_policies:
+        denoise(model, warm, args.seeds[0], 3, TeaCache())
     del warm
     print("Warmup complete", flush=True)
     for repeat, pid, prompt, seed, name in generate:

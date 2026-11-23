@@ -4,6 +4,9 @@ from dataclasses import dataclass
 
 import mlx.core as mx
 
+from feature_reuse.spectrum import SpectralForecast, Spectrum
+from feature_reuse.teacache import TeaCache, TeaCacheGate
+
 
 def _check_curvature_weight(weight: float) -> None:
     if not math.isfinite(weight):
@@ -143,6 +146,82 @@ class BlockReuse:
     def arrays(self) -> list[mx.array]:
         return [factor for factors in self.factors.values() for factor in factors]
 
+    def capture_input(self, text, image, block, **kwargs) -> None:
+        self.text_tokens = text.shape[1]
+        self.stream_in = mx.concatenate([text, image], axis=1)
+
+    def finish(self, block, hidden_states, **kwargs) -> mx.array:
+        if self.skip:
+            before_last = hidden_states + self.predict("body")
+            predicted = self.predict("last")
+            if self.checking:
+                self.record_error(predicted, block(hidden_states=before_last, **kwargs) - before_last)
+            return before_last + predicted
+        output = block(hidden_states=hidden_states, **kwargs)
+        self.store("body", hidden_states - self.stream_in)
+        self.store("last", output - hidden_states)
+        return output
+
+
+class _ImageFeatureReuse(BlockReuse):
+    """Reuse the image stream at the boundary between transformer blocks and output head."""
+
+    def __init__(self, policy: Spectrum | TeaCache, sigmas: list[float]) -> None:
+        super().__init__(policy)
+        self.steps = len(sigmas) - 1
+        self.gate = TeaCacheGate(policy) if isinstance(policy, TeaCache) else None
+        self.refresh = policy.refresh_steps(self.steps) if self.gate is None else set()
+        self.residuals = {}
+        self.forecasts = {} if self.gate else {
+            branch: SpectralForecast(policy, sigmas) for branch in ("cond", "uncond")
+        }
+
+    def begin_step(self, step: int, branches=("cond", "uncond")) -> None:
+        self.step = step
+        if self.gate:
+            self.gate_pending = True
+            self.force_refresh = step in (0, self.steps - 1) or any(b not in self.residuals for b in branches)
+        elif step in self.refresh or any(self.forecasts[b].rhs is None for b in branches):
+            self._start_full_step()
+        else:
+            self.skip = True
+
+    def capture_input(self, text, image, block, **kwargs) -> None:
+        self.text_tokens = text.shape[1]
+        self.stream_in = image
+        if self.gate and self.gate_pending:
+            # Klein's image modulation depends on the shared latent and timestep.
+            # The two CFG branches can share the gate but need separate residuals.
+            shift, scale, _ = kwargs["temb_mod_params_img"][0]
+            signal = (1 + scale) * block.norm1(image) + shift
+            self.gate_pending = False
+            if self.gate.reuse(signal, self.force_refresh):
+                self.skip = True
+            else:
+                self.residuals.clear()
+                self._start_full_step()
+
+    def finish(self, block, hidden_states, **kwargs) -> mx.array:
+        if self.skip:
+            if self.gate:
+                image = self.stream_in + self.residuals[self.branch]
+            else:
+                image = self.forecasts[self.branch].predict(self.step, self.stream_in)
+            return mx.concatenate([hidden_states[:, :self.text_tokens], image], axis=1)
+        output = block(hidden_states=hidden_states, **kwargs)
+        image = output[:, self.text_tokens:]
+        if self.gate:
+            self.residuals[self.branch] = image - self.stream_in
+        else:
+            self.forecasts[self.branch].update(self.step, image)
+        return output
+
+    def arrays(self) -> list[mx.array]:
+        if self.gate:
+            signal = self.gate.previous_input
+            return [*self.residuals.values(), *([signal] if signal is not None else [])]
+        return [forecast.rhs for forecast in self.forecasts.values() if forecast.rhs is not None]
+
 
 class _DoubleBlock:
     def __init__(self, block, reuse: BlockReuse, is_first: bool) -> None:
@@ -152,8 +231,7 @@ class _DoubleBlock:
 
     def __call__(self, *, hidden_states, encoder_hidden_states, **kwargs):
         if self.is_first:
-            self.reuse.text_tokens = encoder_hidden_states.shape[1]
-            self.reuse.stream_in = mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
+            self.reuse.capture_input(encoder_hidden_states, hidden_states, self.block, **kwargs)
         if self.reuse.skip:
             return encoder_hidden_states, hidden_states
         return self.block(hidden_states=hidden_states, encoder_hidden_states=encoder_hidden_states, **kwargs)
@@ -166,25 +244,16 @@ class _SingleBlock:
         self.is_last = is_last
 
     def __call__(self, *, hidden_states, **kwargs):
-        reuse = self.reuse
-        if reuse.skip:
-            if not self.is_last:
-                return hidden_states
-            before_last = hidden_states + reuse.predict("body")
-            predicted = reuse.predict("last")
-            if reuse.checking:
-                reuse.record_error(predicted, self.block(hidden_states=before_last, **kwargs) - before_last)
-            return before_last + predicted
-        output = self.block(hidden_states=hidden_states, **kwargs)
         if self.is_last:
-            reuse.store("body", hidden_states - reuse.stream_in)
-            reuse.store("last", output - hidden_states)
-        return output
+            return self.reuse.finish(self.block, hidden_states, **kwargs)
+        if self.reuse.skip:
+            return hidden_states
+        return self.block(hidden_states=hidden_states, **kwargs)
 
 
 @contextmanager
-def reuse_blocks(transformer, policy):
-    reuse = BlockReuse(policy)
+def reuse_blocks(transformer, policy, sigmas=None):
+    reuse = _ImageFeatureReuse(policy, sigmas) if isinstance(policy, (Spectrum, TeaCache)) else BlockReuse(policy)
     if policy is None:
         yield reuse
         return

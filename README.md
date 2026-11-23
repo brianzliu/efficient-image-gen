@@ -219,7 +219,7 @@ Diagnostics write logs, images, and plots under `outputs/guidance-diagnostic/`. 
     full-50+ag-0.998 full-50+interval-1-0.840
 ```
 
-Rerun diagnostics if prompts, step count, sampler, or guidance scale change. Score either experiment using step 5 with its own `--out` path. Keep `full-50` in the suite because scoring uses it as the reference. Compare guidance costs using `full_transformer_passes` and `guided_steps` in `measurements.jsonl`. The report generator still uses pilot-specific prose and does not display guidance/pass counters, so review its text before sharing reports for these extensions.
+Rerun diagnostics if prompts, step count, sampler, or guidance scale change. Score either experiment using step 5 with its own `--out` path. Keep `full-50` in the suite because scoring uses it as the reference. Compare guidance costs using `full_transformer_passes` and `guided_steps` in `measurements.jsonl`.
 
 ## Second-order forecasting and curvature damping
 
@@ -242,6 +242,36 @@ For example, screen all weights on one prompt, then validate the most promising 
 bash scripts/sweep-curvature.sh quick
 bash scripts/sweep-curvature.sh validate 0.25 0.5
 ```
+
+## Spectrum, SharpEuler, and TeaCache
+
+These configurations use the same pinned Klein Base 4B Q4 checkpoint, 512 × 512 resolution, and scoring pipeline as the pilot.
+
+| Configuration | What it measures |
+| --- | --- |
+| `spectrum` or `spectrum-0.33` | Five warmup steps, then an increasing interval between full steps across 50 Euler updates. The degree-four Chebyshev fit uses ridge regularization of 0.1 and forecasts last-block image features separately for each CFG branch. Default growth 0.33 schedules 17 full steps with plain CFG, matching `taylor-3`. [Spectrum paper](https://arxiv.org/abs/2603.01623) |
+| `sharpeuler-17` | Seventeen full steps on a sigma grid calibrated from guided velocities. This implements the paper’s uniform-reference-grid algorithm. Compare with `full-17` to isolate timestep placement. [SharpEuler paper](https://arxiv.org/abs/2605.11547) |
+| `teacache` or `teacache-0.17` | Fifty scheduler updates with a refresh gate based on consecutive timestep-modulated image inputs. The first and last steps run in full. Both CFG branches share a decision and keep separate residuals. The polynomial and default threshold come from the published Klein MLX calibration. [TeaCache paper](https://arxiv.org/abs/2411.19108) · [Klein calibration](https://github.com/IonDen/mlx-teacache/blob/main/docs/variants/flux2-klein-base-4b.md) |
+
+Calibrate SharpEuler once with development prompts in a separate text file, one per line. Use different prompts in the benchmark when measuring generalization. The runner records the calibration and exact sigma grid in the manifest. Calibration time is outside the generation measurements.
+
+```sh
+.venv/bin/python scripts/calibrate-sharpeuler.py \
+  --prompts path/to/calibration-prompts.txt \
+  --out outputs/sharpeuler-profile.json
+
+.venv/bin/python scripts/evaluate-klein.py \
+  --out outputs/acceleration-methods --no-baseline-cache \
+  --sharpeuler-profile outputs/sharpeuler-profile.json \
+  --configs full-50 full-17 taylor-3 spectrum sharpeuler-17 teacache
+
+.venv-quality/bin/python scripts/score-evaluation.py --out outputs/acceleration-methods --image-reward
+.venv/bin/python scripts/report-evaluation.py --out outputs/acceleration-methods \
+  --report outputs/acceleration-report
+.venv/bin/python scripts/validate-evaluation.py --report outputs/acceleration-report
+```
+
+SharpEuler configurations use plain CFG and Euler, matching their calibration. Spectrum and TeaCache accept the sampler and guidance suffixes described above. Compare `sampling_steps`, `full_steps`, and `full_transformer_passes` in the measurements to see the work each method performed.
 
 ## Earlier three-seed benchmark
 

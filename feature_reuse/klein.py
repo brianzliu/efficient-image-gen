@@ -15,6 +15,8 @@ from feature_reuse.reuse import reuse_blocks
 from feature_reuse.samplers import make_sampler
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "klein-base-4b-q4"
+CHECKPOINT = "mflux-community/flux-2-klein-base-4b-mflux-q4"
+CHECKPOINT_REVISION = "f69aa0b43285d0db24695ba68faabbdb1a0ad016"
 SCHEDULER = "flow_match_euler_discrete"
 SIZE = 512
 GUIDANCE = 3.5
@@ -61,6 +63,9 @@ def denoise(
     policy=None,
     sampler: str = "euler",
     guidance=None,
+    sigma_grid=None,
+    *,
+    observe_velocity=None,
 ) -> Denoised:
     prompt, text_ids, negative_prompt, negative_text_ids = embeds
     config = Config(
@@ -72,9 +77,12 @@ def denoise(
         scheduler=SCHEDULER,
     )
     scheduler = config.scheduler
-    solver = make_sampler(sampler, scheduler.sigmas)
+    sigma_array = scheduler.sigmas if sigma_grid is None else mx.array(sigma_grid, dtype=mx.float32)
+    # FLUX.2 accepts normalized sigmas and scales them to the training timestep range.
+    timesteps = scheduler.timesteps if sigma_grid is None else sigma_array[:-1]
+    solver = make_sampler(sampler, sigma_array)
     guide = (guidance or AlwaysOn()).begin()
-    sigmas = scheduler.sigmas.tolist()
+    sigmas = sigma_array.tolist()
     counts = dict(full=0, verification=0, guided=0)
     latents, latent_ids, _, _ = Flux2LatentCreator.prepare_packed_latents(
         seed=seed, height=SIZE, width=SIZE, batch_size=1
@@ -82,22 +90,23 @@ def denoise(
     mx.eval(latents, latent_ids)
     seconds = 0.0
 
-    with reuse_blocks(model.transformer, policy) as reuse:
+    with reuse_blocks(model.transformer, policy, sigmas) as reuse:
 
         def run(branch: str, encoder_hidden_states: mx.array, ids: mx.array) -> mx.array:
             reuse.branch = branch
-            if not reuse.skip:
-                counts["full"] += 1
-            elif reuse.checking:
-                counts["verification"] += 1
-            return model.transformer(
+            output = model.transformer(
                 hidden_states=latents,
                 encoder_hidden_states=encoder_hidden_states,
-                timestep=scheduler.timesteps[step],
+                timestep=timesteps[step],
                 img_ids=latent_ids,
                 txt_ids=ids,
                 guidance=None,
             )
+            if not reuse.skip:
+                counts["full"] += 1
+            elif reuse.checking:
+                counts["verification"] += 1
+            return output
 
         def predict(guided: bool) -> tuple[mx.array, mx.array | None]:
             noise = run("cond", prompt, text_ids)
@@ -117,6 +126,8 @@ def denoise(
                 if not reuse.skip:
                     guide.observe(noise, negative_noise)
                 noise = negative_noise + GUIDANCE * (noise - negative_noise)
+            if observe_velocity is not None:
+                observe_velocity(noise)
             latents = solver.step(noise, step, latents)
             mx.eval(latents, *reuse.arrays())
             seconds += perf_counter() - start
