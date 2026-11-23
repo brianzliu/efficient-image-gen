@@ -47,6 +47,7 @@ def main():
     parser.add_argument("--seeds", nargs="+", type=int, default=[42])
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--transformer", default="q4", help="variant for configs without +bf16, +q4 or +svdq-N")
+    parser.add_argument("--purge", action="store_true", help="empty the OS file cache before each image (needs sudo purge)")
     args = parser.parse_args()
     prompts = [p.strip() for p in args.prompts.read_text().splitlines() if p.strip()]
     if not prompts or not args.seeds or args.repeats < 1:
@@ -68,6 +69,8 @@ def main():
                     checkpoint_revision="f69aa0b43285d0db24695ba68faabbdb1a0ad016",
                     packages={p: version(p) for p in ["mlx", "mflux", "numpy"]},
                     macos=platform.mac_ver()[0], machine=platform.machine())
+    if args.purge:
+        identity["purge"] = True  # Only when set, so earlier output directories still resume.
     args.out.mkdir(parents=True, exist_ok=True)
     manifest = args.out / "manifest.json"
     if manifest.exists() and json.loads(manifest.read_text())["identity"] != identity:
@@ -133,6 +136,9 @@ def main():
                     stage = streamer.stage if streamer else (lambda part, mode: contextlib.nullcontext())
                     if streamer:
                         streamer.prepare(mode)
+                    if args.purge:
+                        # Streamed weights then come from the SSD, not memory, at least on the first pass.
+                        subprocess.run(["sudo", "-n", "/usr/sbin/purge"], check=True)
                     gc.collect(); mx.clear_cache(); mx.synchronize(); mx.reset_peak_memory()
                     started_unix = time.time()
                     start = time.perf_counter()
