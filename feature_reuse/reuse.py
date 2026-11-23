@@ -1,13 +1,27 @@
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 import mlx.core as mx
+
+from feature_reuse.spectrum import SpectralForecast, Spectrum
+
+
+def _check_curvature_weight(weight: float) -> None:
+    if not math.isfinite(weight):
+        raise ValueError(f"curvature_weight must be finite, got {weight}")
 
 
 @dataclass(frozen=True)
 class FixedInterval:
     interval: int
     forecast: bool = False
+    order: int = 1
+    # Scales the second-order term; 1.0 is undamped and 0.0 reduces order 2 to order 1.
+    curvature_weight: float = 1.0
+
+    def __post_init__(self) -> None:
+        _check_curvature_weight(self.curvature_weight)
 
     def runs_blocks(self, step: int, predicted: int) -> bool:
         return step % self.interval == 0
@@ -25,7 +39,12 @@ class SpeCa:
     # The reference code uses 2, which leaves little room to adapt near 17 full steps.
     min_predicted: int = 1
     max_predicted: int = 8
+    order: int = 1
+    curvature_weight: float = 1.0
     forecast = True
+
+    def __post_init__(self) -> None:
+        _check_curvature_weight(self.curvature_weight)
 
     def runs_blocks(self, step: int, predicted: int) -> bool:
         return step < self.warmup_steps or predicted >= self.max_predicted
@@ -55,6 +74,7 @@ class TeaCache:
     total_steps: int
     forecast: bool = False
     coefficients: tuple[float, ...] = KLEIN_TEACACHE_COEFFICIENTS
+    order = 1
 
     def runs_blocks(self, step: int, predicted: int) -> bool:
         return step == 0 or step == self.total_steps - 1
@@ -80,9 +100,11 @@ class BlockReuse:
         self.full_steps = 0
         self.rejected_steps = 0
         self.errors = []
-        # (branch, segment) -> (step the factors were computed at, factors). Timing is kept per
-        # branch because guidance policies can leave the unconditional branch out of a full step.
+        # (branch, segment) -> divided differences and the full steps they were computed at.
+        # Timing is kept per branch because guidance policies can leave the unconditional branch
+        # out of a full step.
         self.factors = {}
+        self.knots = {}
         self.stream_in = None
         self.text_tokens = 0
         self.checked_steps = 0
@@ -142,18 +164,31 @@ class BlockReuse:
             self.accumulated = 0.0
 
     def store(self, segment: str, residual: mx.array) -> None:
+        # Newton divided differences over the most recent full steps, newest first.
+        # They stay exact for polynomials up to the policy order even when spacing is uneven.
         key = (self.branch, segment)
-        factors = [residual]
+        factors, knots = [residual], [self.step]
         if self.policy.forecast and key in self.factors:
-            stored_step, previous = self.factors[key]
-            factors.append((residual - previous[0]) / (self.step - stored_step))
-        self.factors[key] = (self.step, factors)
+            old_factors, old_knots = self.factors[key], self.knots[key]
+            for i in range(min(self.policy.order, len(old_factors))):
+                factors.append((factors[i] - old_factors[i]) / (self.step - old_knots[i]))
+                knots.append(old_knots[i])
+        self.factors[key], self.knots[key] = factors, knots
 
     def predict(self, segment: str) -> mx.array:
-        stored_step, factors = self.factors[(self.branch, segment)]
-        if len(factors) == 1:
-            return factors[0]
-        return factors[0] + (self.step - stored_step) * factors[1]
+        key = (self.branch, segment)
+        prediction, weight = self.factors[key][0], 1
+        for order, (factor, knot) in enumerate(zip(self.factors[key][1:], self.knots[key]), start=1):
+            weight *= self.step - knot
+            if order == 2:
+                damping = getattr(self.policy, "curvature_weight", 1.0)
+                if damping == 0:
+                    # Skip rather than multiply so a non-finite curvature cannot leak in as 0 * inf.
+                    continue
+                prediction = prediction + (damping * weight) * factor
+            else:
+                prediction = prediction + weight * factor
+        return prediction
 
     def record_error(self, predicted: mx.array, actual: mx.array) -> None:
         # Text tokens never reach the output, and their large values would dominate.
@@ -162,7 +197,63 @@ class BlockReuse:
         self.errors.append(mx.sqrt(mx.sum(difference**2)) / (mx.sqrt(mx.sum(actual**2)) + 1e-8))
 
     def arrays(self) -> list[mx.array]:
-        return [factor for _, factors in self.factors.values() for factor in factors]
+        arrays = [factor for factors in self.factors.values() for factor in factors]
+        if self.previous_input is not None:
+            arrays.append(self.previous_input)
+        return arrays
+
+    def capture_input(self, text, image, block, **kwargs) -> None:
+        self.text_tokens = text.shape[1]
+        self.stream_in = mx.concatenate([text, image], axis=1)
+        if isinstance(self.policy, TeaCache):
+            (shift, scale, _), _ = kwargs["temb_mod_params_img"]
+            self.observe((1 + scale) * block.norm1(image) + shift)
+
+    def finish(self, block, hidden_states, **kwargs) -> mx.array:
+        if self.skip:
+            before_last = hidden_states + self.predict("body")
+            predicted = self.predict("last")
+            if self.checking:
+                self.record_error(predicted, block(hidden_states=before_last, **kwargs) - before_last)
+            return before_last + predicted
+        output = block(hidden_states=hidden_states, **kwargs)
+        self.store("body", hidden_states - self.stream_in)
+        self.store("last", output - hidden_states)
+        return output
+
+
+class _SpectrumReuse(BlockReuse):
+    """Forecast image features at the boundary between the blocks and the output head."""
+
+    def __init__(self, policy: Spectrum, sigmas: list[float]) -> None:
+        super().__init__(policy)
+        self.refresh = policy.refresh_steps(len(sigmas) - 1)
+        self.forecasts = {
+            branch: SpectralForecast(policy, sigmas) for branch in ("cond", "uncond")
+        }
+
+    def begin_step(self, step: int, branches=("cond", "uncond")) -> None:
+        self.step = step
+        if step in self.refresh or any(self.forecasts[b].rhs is None for b in branches):
+            self._start_full_step()
+        else:
+            self.skip = True
+
+    def capture_input(self, text, image, block, **kwargs) -> None:
+        self.text_tokens = text.shape[1]
+        self.stream_in = image
+
+    def finish(self, block, hidden_states, **kwargs) -> mx.array:
+        if self.skip:
+            image = self.forecasts[self.branch].predict(self.step, self.stream_in)
+            return mx.concatenate([hidden_states[:, :self.text_tokens], image], axis=1)
+        output = block(hidden_states=hidden_states, **kwargs)
+        image = output[:, self.text_tokens:]
+        self.forecasts[self.branch].update(self.step, image)
+        return output
+
+    def arrays(self) -> list[mx.array]:
+        return [forecast.rhs for forecast in self.forecasts.values() if forecast.rhs is not None]
 
 
 class _DoubleBlock:
@@ -173,11 +264,7 @@ class _DoubleBlock:
 
     def __call__(self, *, hidden_states, encoder_hidden_states, **kwargs):
         if self.is_first:
-            self.reuse.text_tokens = encoder_hidden_states.shape[1]
-            self.reuse.stream_in = mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
-            if isinstance(self.reuse.policy, TeaCache):
-                (shift, scale, _), _ = kwargs["temb_mod_params_img"]
-                self.reuse.observe((1 + scale) * self.block.norm1(hidden_states) + shift)
+            self.reuse.capture_input(encoder_hidden_states, hidden_states, self.block, **kwargs)
         if self.reuse.skip:
             return encoder_hidden_states, hidden_states
         return self.block(hidden_states=hidden_states, encoder_hidden_states=encoder_hidden_states, **kwargs)
@@ -190,25 +277,16 @@ class _SingleBlock:
         self.is_last = is_last
 
     def __call__(self, *, hidden_states, **kwargs):
-        reuse = self.reuse
-        if reuse.skip:
-            if not self.is_last:
-                return hidden_states
-            before_last = hidden_states + reuse.predict("body")
-            predicted = reuse.predict("last")
-            if reuse.checking:
-                reuse.record_error(predicted, self.block(hidden_states=before_last, **kwargs) - before_last)
-            return before_last + predicted
-        output = self.block(hidden_states=hidden_states, **kwargs)
         if self.is_last:
-            reuse.store("body", hidden_states - reuse.stream_in)
-            reuse.store("last", output - hidden_states)
-        return output
+            return self.reuse.finish(self.block, hidden_states, **kwargs)
+        if self.reuse.skip:
+            return hidden_states
+        return self.block(hidden_states=hidden_states, **kwargs)
 
 
 @contextmanager
-def reuse_blocks(transformer, policy):
-    reuse = BlockReuse(policy)
+def reuse_blocks(transformer, policy, sigmas=None):
+    reuse = _SpectrumReuse(policy, sigmas) if isinstance(policy, Spectrum) else BlockReuse(policy)
     if policy is None:
         yield reuse
         return

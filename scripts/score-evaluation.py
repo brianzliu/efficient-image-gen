@@ -68,6 +68,8 @@ def main():
             reference = Image.open(args.out / ref["image"]).convert("RGB")
             metrics = similarity(reference, image)
             metrics["image_sha256"] = hashlib.sha256((args.out / r["image"]).read_bytes()).hexdigest()
+            if r.get("image_sha256") not in (None, metrics["image_sha256"]):
+                raise ValueError(f"{r['key']}: image changed since generation")
             metrics["lpips"] = float(perceptual(tensor(reference), tensor(image)).item())
             inputs = processor(text=[r["prompt"]], images=image, return_tensors="pt", padding=True, truncation=True)
             prediction = clip(**inputs)

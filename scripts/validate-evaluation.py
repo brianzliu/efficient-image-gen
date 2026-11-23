@@ -24,10 +24,13 @@ assert len(rows)==len(expected)
 scoring=json.loads((root/"scoring.json").read_text())
 assert scoring["measurements_sha256"]==hashlib.sha256((root/"measurements.jsonl").read_bytes()).hexdigest()
 power=json.loads((root/"power.json").read_text()) if (root/"power.json").exists() else None
+phase_peaks=[f"{phase}_peak_mlx_gb" for phase in ("encode", "denoise", "decode")]
 for r in rows:
     assert r["prompt"]==identity["prompts"][r["prompt_id"]]
     assert abs(r["total_s"]-sum(r[k] for k in ["encode_s","denoise_s","decode_s"]))<1e-6
     assert r["full_steps"]+r["accepted_reuse_steps"]==r["sampling_steps"]
+    if "encode_peak_mlx_gb" in r:
+        assert r["peak_mlx_gb"]==max(r[key] for key in phase_peaks)
     # Guidance policies can leave the unconditional branch out, so each step has one or two passes.
     guided = r.get("guided_steps", r["sampling_steps"])
     if guided == r["sampling_steps"]:
@@ -58,8 +61,24 @@ for s in summary:
     assert s["energy_n"]==len(energies)
     if energies:
         assert abs(s["energy_j"]-sum(energies)/len(energies))<1e-6
+    for key in phase_peaks:
+        if key in group[0]:
+            assert math.isclose(s[key], sum(r[key] for r in group)/len(group))
+profile_checks=[]
+if identity.get("profile"):
+    profile=json.loads((root/"profile.json").read_text())
+    assert profile["mode"]==identity["profile"]
+    assert profile["prompt_id"]==0 and profile["prompt"]==identity["prompts"][0]
+    assert profile["seed"]==identity["seeds"][0]
+    assert set(profile["configs"])==set(identity["configs"])
+    for name, diagnostic in profile["configs"].items():
+        assert diagnostic["sampling_steps"]==next(r["sampling_steps"] for r in rows if r["config"]==name)
+        assert 0 < diagnostic["full_steps"] <= diagnostic["sampling_steps"]
+        assert diagnostic["paths"]["transformer"]["calls"] >= diagnostic["full_transformer_passes"]
+    profile_checks.append("profile coverage and transformer call counts")
 result=dict(generations=len(rows),matched_energy_pairs=sorted(common),matched_energy_images=len(common)*len(summary),
     status="passed",checks=["complete unique trial keys","prompt identities","phase timing sums","CFG computation counters",
-        "image hashes","self-reference metrics","energy reintegration","paired energy aggregation","speedup recalculation"])
+        "image hashes","self-reference metrics","energy reintegration","paired energy aggregation","speedup recalculation",
+        *(["phase memory peaks and averages"] if phase_peaks[0] in rows[0] else []), *profile_checks])
 (root/"validation.json").write_text(json.dumps(result,indent=2))
 print(json.dumps(result,indent=2))

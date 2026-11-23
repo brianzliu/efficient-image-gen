@@ -81,9 +81,10 @@ Run the tests and real-model equivalence checks before the measured suite:
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/python scripts/check-klein-equivalence.py
+KLEIN_INTEGRATION=1 .venv/bin/python -m unittest tests.test_klein_integration -v
 ```
 
-The equivalence script checks the custom loop against MFLUX and checks that guidance settings equivalent to plain CFG produce matching outputs. The current suite includes tests added after the pilot; its test count can differ from the saved pilot logs.
+The equivalence script checks the custom loop against MFLUX and checks that sampler and guidance settings equivalent to plain CFG produce matching outputs. It requires bit-identical pixels between our eager loop and MFLUX's uncompiled path, and only exact comparisons set the exit code. It also reports, without failing, the differences from MFLUX's default path, which wraps prediction in `mx.compile` on chips other than M1/M2; fused kernels round FP16 differently, so those images are not pixel-identical. Every reuse configuration in the script runs all steps in full, so none of its checks exercise forecasting. The opt-in `tests/test_klein_integration.py` covers second-order forecasting and curvature damping on the real model. The current suite includes tests added after the pilot; its test count can differ from the saved pilot logs.
 
 ## 3. Start optional energy collection
 
@@ -218,7 +219,68 @@ Diagnostics write logs, images, and plots under `outputs/guidance-diagnostic/`. 
     full-50+ag-0.998 full-50+interval-1-0.840
 ```
 
-Rerun diagnostics if prompts, step count, sampler, or guidance scale change. Score either experiment using step 5 with its own `--out` path. Keep `full-50` in the suite because scoring uses it as the reference. Compare guidance costs using `full_transformer_passes` and `guided_steps` in `measurements.jsonl`. The report generator still uses pilot-specific prose and does not display guidance/pass counters, so review its text before sharing reports for these extensions.
+Rerun diagnostics if prompts, step count, sampler, or guidance scale change. Score either experiment using step 5 with its own `--out` path. Keep `full-50` in the suite because scoring uses it as the reference. Compare guidance costs using `full_transformer_passes` and `guided_steps` in `measurements.jsonl`.
+
+## Second-order forecasting and curvature damping
+
+These extensions are also separate from the initial pilot.
+
+Second-order forecasting is available through an order digit in the config name: `taylor2-3` and, for example, `speca2-0.1-0.5`. It adds a curvature term computed from the last three full computations using Newton divided differences, which remain valid when adaptive rejections make the full-step spacing uneven. Before three full computations exist, it falls back to first order. It costs the same full steps as first order and caches one extra feature set per segment and guidance branch. These configs are not part of the default suite; pass them with `--configs`, for example `--configs full-50 full-17 taylor-3 taylor2-3`. They accept the same sampler and guidance suffixes as other configurations, for example `taylor2-3-c0.25+dpmpp2m`.
+
+Experimental damped second order scales only the curvature term: `prediction = first_order_prediction + curvature_weight * second_order_correction`. Select it with a `-c<weight>` suffix on a second-order config, for example `taylor2-3-c0.25` or `speca2-0.1-0.5-c0.5`. Unsuffixed names keep weight 1.0, and weight 0 reproduces first-order predictions from the same anchor history. Damping adds no transformer evaluations, but the curvature cache is still stored. `scripts/sweep-curvature.sh` compares weights against `full-50` and first-order `taylor-3`, all on the fixed interval-3 schedule, and finishes with `curvature-summary.md` (LPIPS, SSIM, ImageReward, denoise latency and speedup, full transformer passes). It never writes to `reports/` or `results/`. Modes:
+
+- `quick [OUT_DIR]` screens weights 0, 0.1, 0.25, 0.5, 0.75, and 1.0 on prompt 0 at seed 42 (default `outputs/curvature-quick`, about 40 minutes on an M4).
+- `validate WEIGHT... [--out OUT_DIR]` runs only the selected weights on every prompt (default `outputs/curvature-validate-c<w>_…`).
+- `full [OUT_DIR]` runs all six weights on every prompt (default `outputs/curvature-sweep`, roughly 3–4 hours on an M4).
+- `score OUT_DIR` rescores, reports, and summarizes existing images without generating.
+
+Arguments after `--` go to `evaluate-klein.py`, for example `validate 0.25 -- --seeds 42 43 44`. Each mode records its own experiment label in the identity, so quick-screen and validation results cannot share a directory. Rerunning a directory resumes it: each completed trial is checked against the identity and its image SHA-256 before it is skipped, and an interrupted final line is dropped so that trial reruns. Full-step images are stored in `outputs/baseline-cache` and reused by later experiments only when the prompt text, seed, repeat, step count, size, guidance, scheduler, checkpoint revision, package versions, macOS, chip, and generation source hash all match; a modified cache entry is an error. A reused baseline keeps the latency measured in its original session, and the summary lists where it came from. Pass `-- --no-baseline-cache` to regenerate.
+
+For example, screen all weights on one prompt, then validate the most promising ones on every prompt:
+
+```sh
+bash scripts/sweep-curvature.sh quick
+bash scripts/sweep-curvature.sh validate 0.25 0.5
+```
+
+## Spectrum, SharpEuler, and VDE
+
+These configurations use the same pinned Klein Base 4B Q4 checkpoint, 512 × 512 resolution, and scoring pipeline as the pilot.
+
+| Configuration | What it measures |
+| --- | --- |
+| `spectrum` or `spectrum-0.33` | Five warmup steps, then an increasing interval between full steps across 50 Euler updates. The degree-four Chebyshev fit uses ridge regularization of 0.1 and forecasts last-block image features separately for each CFG branch. Default growth 0.33 schedules 17 full steps with plain CFG, matching `taylor-3`. [Spectrum paper](https://arxiv.org/abs/2603.01623) |
+| `sharpeuler-17` | Seventeen full steps on a sigma grid calibrated from guided velocities. This implements the paper’s uniform-reference-grid algorithm. Compare with `full-17` to isolate timestep placement. [SharpEuler paper](https://arxiv.org/abs/2605.11547) |
+| `vde-4` | Seven warmup steps, then a full step every four updates, with a full final step. This uses 18 full steps across 50 updates. In between, VDE extrapolates the guided velocity from the two most recent full steps using the current latent. [VDE paper](https://arxiv.org/abs/2605.23381) |
+
+Alan's calibrated TeaCache is available as `teacache-0.11` and `teacache-taylor-0.11`. [Klein TeaCache results](results/teacache.md)
+
+Calibrate SharpEuler once with development prompts in a separate text file, one per line. Use different prompts in the benchmark when measuring generalization. The runner records the calibration and exact sigma grid in the manifest. Calibration time is outside the generation measurements.
+
+```sh
+.venv/bin/python scripts/calibrate-sharpeuler.py \
+  --prompts path/to/calibration-prompts.txt \
+  --out outputs/sharpeuler-profile.json
+
+.venv/bin/python scripts/evaluate-klein.py \
+  --out outputs/acceleration-methods --no-baseline-cache \
+  --sharpeuler-profile outputs/sharpeuler-profile.json \
+  --profile blocks \
+  --configs full-50 full-17 taylor-3 spectrum sharpeuler-17 vde-4
+
+.venv-quality/bin/python scripts/score-evaluation.py --out outputs/acceleration-methods --image-reward
+.venv/bin/python scripts/report-evaluation.py --out outputs/acceleration-methods \
+  --report outputs/acceleration-report
+.venv/bin/python scripts/validate-evaluation.py --report outputs/acceleration-report
+```
+
+SharpEuler uses plain CFG and Euler, matching its calibration. VDE forecasts the CFG-combined velocity and uses plain CFG. Compare `sampling_steps`, `full_steps`, and `full_transformer_passes` in the measurements to see the work each method performed.
+
+### Profiling the evaluator
+
+Every timed trial records encode, denoise, and decode times, phase peaks and end-of-phase MLX allocations, and the active allocation before generation. Weights stay resident throughout the evaluator. Alan's standalone memory study unloaded the encoder before denoising, so its absolute memory figures describe a different setup. The manifest and baseline cache key record any MLX command-buffer settings in the environment. [Alan's profiling study](results/profile.md)
+
+With `--profile blocks`, the evaluator replays the first selected prompt and seed once per configuration after all timed trials. It records exclusive transformer, double-block, and single-block times, calls, and peak allocation above entry memory. Use `--profile ops` for the finer breakdown, including linear projections, attention, rotary embeddings, and estimated multiply-accumulate counts where available. The GPU synchronization used for profiling changes runtime and can change memory behavior. The evaluator saves these diagnostics in `profile.json` separately from the timed measurements and resumes incomplete profiles by configuration. Omit the flag for a run with phase measurements only.
 
 ## Earlier three-seed benchmark
 
