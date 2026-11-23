@@ -1,13 +1,25 @@
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 import mlx.core as mx
 
 
+def _check_curvature_weight(weight: float) -> None:
+    if not math.isfinite(weight):
+        raise ValueError(f"curvature_weight must be finite, got {weight}")
+
+
 @dataclass(frozen=True)
 class FixedInterval:
     interval: int
     forecast: bool = False
+    order: int = 1
+    # Scales the second-order term; 1.0 is undamped and 0.0 reduces order 2 to order 1.
+    curvature_weight: float = 1.0
+
+    def __post_init__(self) -> None:
+        _check_curvature_weight(self.curvature_weight)
 
     def runs_blocks(self, step: int, predicted: int) -> bool:
         return step % self.interval == 0
@@ -25,7 +37,12 @@ class SpeCa:
     # The reference code uses 2, which leaves little room to adapt near 17 full steps.
     min_predicted: int = 1
     max_predicted: int = 8
+    order: int = 1
+    curvature_weight: float = 1.0
     forecast = True
+
+    def __post_init__(self) -> None:
+        _check_curvature_weight(self.curvature_weight)
 
     def runs_blocks(self, step: int, predicted: int) -> bool:
         return step < self.warmup_steps or predicted >= self.max_predicted
@@ -48,9 +65,11 @@ class BlockReuse:
         self.full_steps = 0
         self.rejected_steps = 0
         self.errors = []
-        # (branch, segment) -> (step the factors were computed at, factors). Timing is kept per
-        # branch because guidance policies can leave the unconditional branch out of a full step.
+        # (branch, segment) -> divided differences and the full steps they were computed at.
+        # Timing is kept per branch because guidance policies can leave the unconditional branch
+        # out of a full step.
         self.factors = {}
+        self.knots = {}
         self.stream_in = None
         self.text_tokens = 0
         self.checked_steps = 0
@@ -89,18 +108,31 @@ class BlockReuse:
         return True
 
     def store(self, segment: str, residual: mx.array) -> None:
+        # Newton divided differences over the most recent full steps, newest first.
+        # They stay exact for polynomials up to the policy order even when spacing is uneven.
         key = (self.branch, segment)
-        factors = [residual]
+        factors, knots = [residual], [self.step]
         if self.policy.forecast and key in self.factors:
-            stored_step, previous = self.factors[key]
-            factors.append((residual - previous[0]) / (self.step - stored_step))
-        self.factors[key] = (self.step, factors)
+            old_factors, old_knots = self.factors[key], self.knots[key]
+            for i in range(min(self.policy.order, len(old_factors))):
+                factors.append((factors[i] - old_factors[i]) / (self.step - old_knots[i]))
+                knots.append(old_knots[i])
+        self.factors[key], self.knots[key] = factors, knots
 
     def predict(self, segment: str) -> mx.array:
-        stored_step, factors = self.factors[(self.branch, segment)]
-        if len(factors) == 1:
-            return factors[0]
-        return factors[0] + (self.step - stored_step) * factors[1]
+        key = (self.branch, segment)
+        prediction, weight = self.factors[key][0], 1
+        for order, (factor, knot) in enumerate(zip(self.factors[key][1:], self.knots[key]), start=1):
+            weight *= self.step - knot
+            if order == 2:
+                damping = getattr(self.policy, "curvature_weight", 1.0)
+                if damping == 0:
+                    # Skip rather than multiply so a non-finite curvature cannot leak in as 0 * inf.
+                    continue
+                prediction = prediction + (damping * weight) * factor
+            else:
+                prediction = prediction + weight * factor
+        return prediction
 
     def record_error(self, predicted: mx.array, actual: mx.array) -> None:
         # Text tokens never reach the output, and their large values would dominate.
@@ -109,7 +141,7 @@ class BlockReuse:
         self.errors.append(mx.sqrt(mx.sum(difference**2)) / (mx.sqrt(mx.sum(actual**2)) + 1e-8))
 
     def arrays(self) -> list[mx.array]:
-        return [factor for _, factors in self.factors.values() for factor in factors]
+        return [factor for factors in self.factors.values() for factor in factors]
 
 
 class _DoubleBlock:
