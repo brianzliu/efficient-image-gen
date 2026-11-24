@@ -318,7 +318,13 @@
 % Using the tex-text mapping for ligatures etc.
 \defaultfontfeatures{Ligatures=TeX, Mapping = tex-text}
 % Set the default fonts
-\usepackage[bitstream-charter]{mathdesign}
+% Minimal TeX installations may lack the Type 1 Charter fonts required by
+% mathdesign. Keep standard math fonts when those files are unavailable.
+\IfFileExists{bchr8a.pfb}{
+    \usepackage[bitstream-charter]{mathdesign}
+}{
+    \usepackage{amssymb}
+}
 % https://mirror.math.princeton.edu/pub/CTAN/fonts/xcharter/doc/xcharter-doc.pdf
 \setmainfont{XCharter}
 % \usepackage[sups]{XCharter}
@@ -326,7 +332,18 @@
 \IfFontExistsTF{Fira Code}{
     \setmonofont[Scale=0.9]{Fira Code}
 }{
-    \setmonofont[Scale=0.9]{Latin Modern Mono}
+    % TeX-distributed fonts may be available as files without being registered
+    % under their family name with the operating system.
+    \IfFontExistsTF{Latin Modern Mono}{
+        \setmonofont[Scale=0.9]{Latin Modern Mono}
+    }{
+        \setmonofont[
+            Scale=0.9,
+            BoldFont=lmmonolt10-bold.otf,
+            ItalicFont=lmmono10-italic.otf,
+            BoldItalicFont=lmmonolt10-boldoblique.otf
+        ]{lmmono10-regular.otf}
+    }
 }
 
 
