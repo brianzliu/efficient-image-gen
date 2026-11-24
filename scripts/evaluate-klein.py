@@ -1,5 +1,6 @@
 """Reproducible generation suite. Score images separately with score-evaluation.py."""
 import argparse
+import contextlib
 import gc
 import hashlib
 import importlib.util
@@ -17,16 +18,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("HF_HOME", str(ROOT / ".cache/huggingface"))
 import mlx.core as mx
-from feature_reuse.klein import CHECKPOINT, CHECKPOINT_REVISION, SIZE, GUIDANCE, SCHEDULER, load_klein, encode_prompt, denoise, decode
+from feature_reuse.klein import CHECKPOINT, CHECKPOINT_REVISION, MODEL_PATH, SIZE, GUIDANCE, SCHEDULER, load_klein, encode_prompt, denoise, decode
 from feature_reuse.profiling import BLOCK_TARGETS, OP_TARGETS, memory_snapshot, profile_summary, profiled
 from feature_reuse.reuse import SpeCa, TeaCache
 from feature_reuse.spectrum import Spectrum
+from feature_reuse.streaming import Streamer, split_mode
+from feature_reuse.svdquant import load_transformer, parse_variant, split_variant
+from feature_reuse.toma import split_toma, token_merging
 from feature_reuse.vde import VDE
 from evaluation.experiment import BaselineCache, baseline_fields, load_completed, sha256_file, trial_key
 
 spec = importlib.util.spec_from_file_location("benchmark", ROOT / "scripts/benchmark-klein.py")
 benchmark = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(benchmark)
+VARIANTS = ROOT / "models/klein-base-4b-bf16/variants"
 DEFAULTS = ["full-50", "full-17", "fixed-3", "taylor-3", "speca-0.1-0.5", "speca-0.3-0.5", "speca-0.3-1.0", "speca-nocheck"]
 
 
@@ -34,6 +39,11 @@ def digest_sources():
     files = sorted((ROOT / "feature_reuse").glob("*.py")) + [Path(__file__), ROOT / "scripts/benchmark-klein.py",
                                                             ROOT / "evaluation/experiment.py"]
     return hashlib.sha256(b"".join(p.read_bytes() for p in files)).hexdigest()
+
+
+def stream_dir(variant):
+    # Per-layer weight files for streaming, one set per transformer variant.
+    return MODEL_PATH / "stream" if variant == "q4" else VARIANTS / f"stream-{variant}"
 
 
 def run_profiles(model, configs, prompt, seed, path, diagnostics):
@@ -80,6 +90,8 @@ def main():
     parser.add_argument("--sharpeuler-profile", type=Path, help="Calibration JSON from calibrate-sharpeuler.py")
     parser.add_argument("--profile", choices=("blocks", "ops"),
                         help="After timed trials, profile the first prompt and seed once per configuration")
+    parser.add_argument("--transformer", default="q4", help="variant for configs without +bf16, +q4 or +svdq-N")
+    parser.add_argument("--purge", action="store_true", help="empty the OS file cache before each image (needs sudo purge)")
     args = parser.parse_args()
     prompts = [p.strip() for p in args.prompts.read_text().splitlines() if p.strip()]
     if args.prompt_ids is not None:
@@ -89,10 +101,22 @@ def main():
     if not prompts or not args.seeds or args.repeats < 1:
         parser.error("Need prompts, seeds, and positive repeats")
     try:
+        parse_variant(args.transformer)
+        # "+bf16"/"+svdq-32" pick the transformer and "+stage"/"+layer" pick streaming; the rest is the method.
+        tomas = {c: split_toma(c) for c in args.configs}
+        variants = {c: split_variant(tomas[c][0], args.transformer) for c in args.configs}
+        modes = {c: split_mode(variants[c][0]) for c in args.configs}
         profile = benchmark.load_sharpeuler_profile(args.sharpeuler_profile)
-        configs = {c: benchmark.parse_config(c, profile) for c in args.configs}
+        configs = {c: benchmark.parse_config(modes[c][0], profile) for c in args.configs}
     except (OSError, ValueError) as error:
         parser.error(str(error))
+    modes = {c: mode for c, (_, mode) in modes.items()}
+    variants = {c: variant for c, (_, variant) in variants.items()}
+    tomas = {c: ratio for c, (_, ratio) in tomas.items()}
+    # The default Q4 transformer is the one load_klein reads; other variants come from build-svdquant.py.
+    swaps = set(variants.values()) != {"q4"}
+    if args.profile and (swaps or set(modes.values()) != {"resident"} or any(tomas.values())):
+        parser.error("--profile supports only resident Q4 configs")
     for steps, policy, *_ in configs.values():
         if steps < 1 or (hasattr(policy, "interval") and policy.interval < 1):
             parser.error("Steps and reuse intervals must be positive")
@@ -107,6 +131,11 @@ def main():
     ) if key in os.environ}
     if args.profile:
         identity["profile"] = args.profile
+    # Only when not the default, so earlier output directories still resume.
+    if swaps:
+        identity["transformer"] = args.transformer
+    if args.purge:
+        identity["purge"] = True
     grids = {name: config[4] for name, config in configs.items() if len(config) == 5}
     if grids:
         identity.update(sharpeuler_profile=profile, sigma_grids=grids)
@@ -153,8 +182,13 @@ def main():
 
     def fields(repeat, prompt, seed, name):
         steps, policy, *_ = configs[name]
-        if cache and policy is None and name not in grids:
-            return baseline_fields(identity, name, steps, prompt, seed, repeat)
+        if cache and policy is None and name not in grids and not args.purge:
+            # Name the transformer and streaming mode, so a BF16 or streamed run never reuses a Q4 image.
+            parts = [p for p in name.split("+") if p not in (variants[name], modes[name])]
+            parts += [] if variants[name] == "q4" else [variants[name]]
+            parts += [] if modes[name] == "resident" else [modes[name]]
+            canonical = "+".join(parts)
+            return baseline_fields(identity, canonical, steps, prompt, seed, repeat)
 
     generate = []
     for repeat, pid, prompt, seed, name in pending:
@@ -185,23 +219,65 @@ def main():
         denoise(model, warm, args.seeds[0], 3, TeaCache(0.11, 3))
     if VDE in remaining_policies:
         denoise(model, warm, args.seeds[0], 4, VDE(warmup=2))
+    for setting in sorted({tomas[name] for *_, name in generate} - {None}):
+        with token_merging(model.transformer, setting):
+            denoise(model, warm, args.seeds[0], 3)
     del warm
+    # Streaming modes reload weights from per-layer files written once next to the checkpoint.
+    streamer = Streamer(model, MODEL_PATH / "stream") if set(modes.values()) != {"resident"} else None
+    if streamer:
+        streamer.prepare("layer")
+        with streamer.stage("text_encoder", "layer"):
+            warm = encode_prompt(model, prompts[0])
+        with streamer.stage("transformer", "layer"):
+            latents = denoise(model, warm, args.seeds[0], 2).latents
+        with streamer.stage("vae", "layer"):
+            decode(model, latents)
+        del warm, latents
+
+    def swap(variant):
+        if streamer:
+            streamer.release("transformer")
+        load_transformer(model, variant, VARIANTS)
+        if streamer:
+            streamer.bind("transformer", stream_dir(variant))
+            streamer.prepare("resident")
+
+    current = "q4"
+    if swaps:
+        for variant in sorted({variants[name] for *_, name in generate}):
+            swap(variant)
+            denoise(model, encode_prompt(model, prompts[0]), args.seeds[0], 2)
+            current = variant
     print("Warmup complete", flush=True)
     for repeat, pid, prompt, seed, name in generate:
         key = trial_key(repeat, pid, seed, name)
+        mode = modes[name]
+        if variants[name] != current:
+            swap(variants[name])
+            current = variants[name]
+        stage = streamer.stage if streamer else (lambda part, mode: contextlib.nullcontext())
+        if streamer:
+            streamer.prepare(mode)
+        if args.purge:
+            # Streamed weights then come from the SSD, not memory, at least on the first pass.
+            subprocess.run(["sudo", "-n", "/usr/sbin/purge"], check=True)
         gc.collect(); mx.clear_cache(); mx.synchronize(); mx.reset_peak_memory()
         active_before = mx.get_active_memory()
         started_unix = time.time()
         start = time.perf_counter()
-        embeds = encode_prompt(model, prompt)
+        with stage("text_encoder", mode):
+            embeds = encode_prompt(model, prompt)
         encoded = time.perf_counter()
         active_encoded, peak_encoded = memory_snapshot()
         mx.reset_peak_memory()
-        result = denoise(model, embeds, seed, *configs[name])
+        with stage("transformer", mode), token_merging(model.transformer, tomas[name]):
+            result = denoise(model, embeds, seed, *configs[name])
         denoised = time.perf_counter()
         active_denoised, peak_denoised = memory_snapshot()
         mx.reset_peak_memory()
-        image = decode(model, result.latents)
+        with stage("vae", mode):
+            image = decode(model, result.latents)
         mx.synchronize()
         end = time.perf_counter()
         ended_unix = time.time()

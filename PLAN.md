@@ -36,7 +36,7 @@ These single runs confirm execution, not a comparative performance or quality re
 
 ## Evaluating acceleration
 
-The [Klein ablation pilot report](reports/klein-ablation-pilot/README.md) contains 40 evaluated images across eight configurations, quality/resource plots, raw results, and [findings](reports/klein-ablation-pilot/findings.md). Energy comparisons use 24 images with fully matched telemetry coverage. Alan's earlier three-seed, denoising-only study remains in [results/summary.md](results/summary.md).
+The [Klein ablation pilot report](reports/klein-ablation-pilot/README.md) contains 40 evaluated images across eight configurations, quality/resource plots, raw results, and [findings](reports/klein-ablation-pilot/findings.md). Energy comparisons use 24 images with fully matched telemetry coverage. Alan's earlier three-seed, denoising-only study remains in [results/summary.md](results/feature-reuse/summary.md).
 
 The evaluator runs all eight configured ablations at 512 × 512: `full-50`, `full-17`, `fixed-3`, `taylor-3`, `speca-0.1-0.5`, `speca-0.3-0.5`, `speca-0.3-1.0`, and `speca-nocheck`. The last disables verification while retaining adaptive policy warmup and the maximum reuse interval. Fixed and Taylor interval three each use 17 full steps; adaptive methods choose their full-step counts. These are approximate feature-reuse methods, not distribution-preserving speculative sampling. Pass `--configs` to choose other configurations, including the sampler and guidance variants described in [Samplers and guidance](#samplers-and-guidance).
 

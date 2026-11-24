@@ -98,7 +98,7 @@ Step time grows about linearly with tokens, at about 4 ms per token. Peak memory
 |---:|---|---|---|
 | 1 | Unconditional pass | It is half of all model passes | Not tested |
 | 2 | Padding tokens | Keeping 64 saves 30% of step time | Image quality not tested |
-| 3 | Full model passes | Feature reuse already skips these, and every block costs about the same | Tested, see [summary.md](summary.md) |
+| 3 | Full model passes | Feature reuse already skips these, and every block costs about the same | Tested, see [summary.md](../feature-reuse/summary.md) |
 | 4 | `to_qkv_mlp_proj` and `to_out` | They take about 67% of time and 63% of weights | Not tested |
 | 5 | `MLX_MAX_MB_PER_BUFFER=5` | Saves 0.55 GB of denoising peak with no measurable slowdown | Tested on one prompt, image unchanged |
 
