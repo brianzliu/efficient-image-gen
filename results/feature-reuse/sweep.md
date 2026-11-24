@@ -1,6 +1,6 @@
 # Taylor sweep, energy and low memory: preliminary results
 
-Three follow-ups to [combined.md](combined.md): how often to refresh, how much energy each config uses, and whether streaming still works when memory is short.
+Three follow-ups to [combined.md](../combined.md): how often to refresh, how much energy each config uses, and whether streaming still works when memory is short.
 
 **Setup:** 5 prompts × 3 seeds, 512×512, M1 Pro with 16 GB. Run with `scripts/evaluate-klein.py`. Quality is measured against `full-50+bf16`. **LPIPS** is perceptual difference (0 = same, lower is better).
 

@@ -6,7 +6,7 @@ Two methods from the literature, tested alone and on top of the best recipe so f
 
 ## Methods
 
-- **ToMA** (Lu et al., 2025) merges similar image tokens before attention in the single-stream blocks (about 80% of the time, see [profile.md](profile.md)) and splits them back after. `toma-0.75` keeps 75% of image tokens. Code: `feature_reuse/toma.py`.
+- **ToMA** (Lu et al., 2025) merges similar image tokens before attention in the single-stream blocks (about 80% of the time, see [profile.md](../profiling/profile.md)) and splits them back after. `toma-0.75` keeps 75% of image tokens. Code: `feature_reuse/toma.py`.
 - **RA-CFGCache** (Liu et al., 2026) decides when to run the full model from the estimated error of the guided output, using both the prompt and no-prompt passes. On skipped steps it reuses the last output. Its error estimates are calibrated once on 3 prompts (`scripts/calibrate-racfg.py`), so in practice it is a fixed schedule. The threshold was set to 0.04 so it uses 17 full steps, the same as `taylor-3`. Code: `feature_reuse/racfg.py`.
 - `racfg-taylor` uses RA-CFGCache's choice of full steps and predicts the steps in between with Taylor, like `taylor-3`.
 

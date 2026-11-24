@@ -8,9 +8,9 @@ What happens when we combine the three methods on FLUX.2 Klein?
 
 | Part | Options tested | What it does |
 |---|---|---|
-| Feature reuse | `taylor-3` | Runs the full model on 17 of 50 steps and predicts the rest. See [teacache.md](teacache.md). |
-| Streaming | `+layer` | Loads one block of weights at a time instead of the whole model. See [streaming.md](streaming.md). |
-| Weight format | `bf16`, `q8`, `q4`, `svdq-128` | 16-, 8- or 4-bit weights. See [svdquant.md](svdquant.md). |
+| Feature reuse | `taylor-3` | Runs the full model on 17 of 50 steps and predicts the rest. See [teacache.md](feature-reuse/teacache.md). |
+| Streaming | `+layer` | Loads one block of weights at a time instead of the whole model. See [streaming.md](memory/streaming.md). |
+| Weight format | `bf16`, `q8`, `q4`, `svdq-128` | 16-, 8- or 4-bit weights. See [svdquant.md](quantization/svdquant.md). |
 
 ## Results
 
@@ -37,7 +37,7 @@ Plain `taylor-3` is the earlier best: q4 weights, no streaming. Streaming gives 
 | Peak memory (GB) | 5.20 | **1.95** |
 | LPIPS vs `full-50+bf16` ↓ | 0.309 | **0.075** |
 
-[teacache.md](teacache.md) lists plain `taylor-3` at LPIPS 0.073, but that was measured against `full-50` with q4 weights. Against `bf16`, the 4-bit weights add far more difference than the Taylor prediction does.
+[teacache.md](feature-reuse/teacache.md) lists plain `taylor-3` at LPIPS 0.073, but that was measured against `full-50` with q4 weights. Against `bf16`, the 4-bit weights add far more difference than the Taylor prediction does.
 
 ## Takeaways
 
@@ -48,5 +48,5 @@ Plain `taylor-3` is the earlier best: q4 weights, no streaming. Streaming gives 
 
 ## Limitations
 
-- Each image reads the 7.75 GB weight file 34 times. A follow-up showed these reads came from the SSD, not the file cache, so the times above already include them, and they stayed the same with less free memory. See [sweep.md](sweep.md).
+- Each image reads the 7.75 GB weight file 34 times. A follow-up showed these reads came from the SSD, not the file cache, so the times above already include them, and they stayed the same with less free memory. See [sweep.md](feature-reuse/sweep.md).
 - 512×512 only, 5 prompts × 3 seeds, one machine.
