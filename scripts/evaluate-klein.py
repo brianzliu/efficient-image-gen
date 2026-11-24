@@ -20,7 +20,7 @@ import mlx.core as mx
 from feature_reuse.klein import CHECKPOINT, CHECKPOINT_REVISION, SIZE, GUIDANCE, SCHEDULER, load_klein, encode_prompt, denoise, decode
 from feature_reuse.profiling import BLOCK_TARGETS, OP_TARGETS, memory_snapshot, profile_summary, profiled
 from feature_reuse.reuse import SpeCa, TeaCache
-from feature_reuse.spectrum import Spectrum
+from feature_reuse.spectrum import LastBlockTaylor, Spectrum
 from feature_reuse.vde import VDE
 from evaluation.experiment import BaselineCache, baseline_fields, load_completed, sha256_file, trial_key
 
@@ -181,10 +181,14 @@ def main():
     remaining_policies = {type(configs[name][1]) for *_, name in generate}
     if Spectrum in remaining_policies:
         denoise(model, warm, args.seeds[0], 7, Spectrum())
+    if LastBlockTaylor in remaining_policies:
+        denoise(model, warm, args.seeds[0], 4, LastBlockTaylor(interval=2))
     if TeaCache in remaining_policies:
         denoise(model, warm, args.seeds[0], 3, TeaCache(0.11, 3))
     if VDE in remaining_policies:
         denoise(model, warm, args.seeds[0], 4, VDE(warmup=2))
+        if any(isinstance(configs[name][1], VDE) and not configs[name][1].decompose for *_, name in generate):
+            denoise(model, warm, args.seeds[0], 4, VDE(warmup=2, decompose=False))
     del warm
     print("Warmup complete", flush=True)
     for repeat, pid, prompt, seed, name in generate:

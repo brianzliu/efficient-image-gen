@@ -5,11 +5,13 @@ from dataclasses import dataclass
 
 import mlx.core as mx
 
+from feature_reuse.linear_forecast import LinearForecast
 
 @dataclass(frozen=True)
 class VDE:
     interval: int = 4
     warmup: int = 7
+    decompose: bool = True
 
     def __post_init__(self) -> None:
         if self.interval < 1 or self.warmup < 2:
@@ -46,3 +48,17 @@ class VelocityEstimator:
 
     def arrays(self) -> list[mx.array]:
         return [self.direction, *(value for _, a, b in self.anchors for value in (a, b))]
+
+
+class LinearVelocityEstimator:
+    def __init__(self) -> None:
+        self.history = LinearForecast()
+
+    def observe(self, sigma: float, latent: mx.array, velocity: mx.array) -> None:
+        self.history.update(sigma, velocity)
+
+    def predict(self, sigma: float, latent: mx.array) -> mx.array:
+        return self.history.predict(sigma, latent.dtype)
+
+    def arrays(self) -> list[mx.array]:
+        return self.history.arrays()

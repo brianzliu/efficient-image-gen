@@ -13,7 +13,7 @@ from mflux.utils.image_util import ImageUtil
 from feature_reuse.guidance import AlwaysOn
 from feature_reuse.reuse import reuse_blocks
 from feature_reuse.samplers import make_sampler
-from feature_reuse.vde import VDE, VelocityEstimator
+from feature_reuse.vde import LinearVelocityEstimator, VDE, VelocityEstimator
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "klein-base-4b-q4"
 CHECKPOINT = "mflux-community/flux-2-klein-base-4b-mflux-q4"
@@ -56,6 +56,13 @@ def encode_prompt(model: Flux2Klein, prompt: str) -> tuple[mx.array, ...]:
     return embeds
 
 
+def klein_scheduler(model_config, steps: int):
+    return Config(
+        model_config=model_config, num_inference_steps=steps, height=SIZE,
+        width=SIZE, guidance=GUIDANCE, scheduler=SCHEDULER,
+    ).scheduler
+
+
 def denoise(
     model: Flux2Klein,
     embeds: tuple[mx.array, ...],
@@ -69,15 +76,7 @@ def denoise(
     observe_velocity=None,
 ) -> Denoised:
     prompt, text_ids, negative_prompt, negative_text_ids = embeds
-    config = Config(
-        model_config=model.model_config,
-        num_inference_steps=steps,
-        height=SIZE,
-        width=SIZE,
-        guidance=GUIDANCE,
-        scheduler=SCHEDULER,
-    )
-    scheduler = config.scheduler
+    scheduler = klein_scheduler(model.model_config, steps)
     sigma_array = scheduler.sigmas if sigma_grid is None else mx.array(sigma_grid, dtype=mx.float32)
     # FLUX.2 accepts normalized sigmas and scales them to the training timestep range.
     timesteps = scheduler.timesteps if sigma_grid is None else sigma_array[:-1]
@@ -86,7 +85,9 @@ def denoise(
     vde = policy if isinstance(policy, VDE) else None
     if vde is not None and not isinstance(guide, AlwaysOn):
         raise ValueError("VDE forecasts a single velocity field and requires plain CFG")
-    estimator = VelocityEstimator() if vde is not None else None
+    estimator = None
+    if vde is not None:
+        estimator = VelocityEstimator() if vde.decompose else LinearVelocityEstimator()
     sigmas = sigma_array.tolist()
     counts = dict(full=0, verification=0, guided=0)
     latents, latent_ids, _, _ = Flux2LatentCreator.prepare_packed_latents(

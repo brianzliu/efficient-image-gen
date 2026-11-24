@@ -4,6 +4,8 @@ from math import floor, isfinite
 import mlx.core as mx
 import numpy as np
 
+from feature_reuse.linear_forecast import LinearForecast
+
 
 @dataclass(frozen=True)
 class Spectrum:
@@ -13,6 +15,7 @@ class Spectrum:
     warmup: int = 5
     degree: int = 4
     ridge: float = 0.1
+    fixed: bool = False
 
     def __post_init__(self) -> None:
         if self.interval < 1 or self.warmup < 1 or self.degree < 0:
@@ -21,6 +24,8 @@ class Spectrum:
             raise ValueError("Spectrum needs finite, nonnegative growth and positive regularization")
 
     def refresh_steps(self, steps: int) -> set[int]:
+        if self.fixed:
+            return set(range(0, steps, self.interval))
         refresh = set(range(min(self.warmup, steps)))
         for r in range(steps):
             step = self.warmup - 1 + floor((r + 1) * self.interval + self.growth * r * (r + 1) / 2)
@@ -50,3 +55,33 @@ class SpectralForecast:
         weights = np.linalg.solve(self.gram, self.basis[step])
         prediction = mx.array(weights, dtype=mx.float32) @ self.rhs
         return prediction.reshape(like.shape).astype(like.dtype)
+
+    def arrays(self) -> list[mx.array]:
+        return [] if self.rhs is None else [self.rhs]
+
+
+@dataclass(frozen=True)
+class LastBlockTaylor:
+    interval: int = 3
+
+    def __post_init__(self) -> None:
+        if self.interval < 1:
+            raise ValueError("Last-block Taylor needs a positive interval")
+
+    def refresh_steps(self, steps: int) -> set[int]:
+        return set(range(0, steps, self.interval))
+
+
+class LastBlockLinearForecast:
+    def __init__(self, sigmas: list[float]) -> None:
+        self.sigmas = sigmas
+        self.history = LinearForecast()
+
+    def update(self, step: int, features: mx.array) -> None:
+        self.history.update(self.sigmas[step], features)
+
+    def predict(self, step: int, like: mx.array) -> mx.array:
+        return self.history.predict(self.sigmas[step], like.dtype)
+
+    def arrays(self) -> list[mx.array]:
+        return self.history.arrays()

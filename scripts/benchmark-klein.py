@@ -18,11 +18,12 @@ os.environ.setdefault("HF_HOME", str(ROOT / ".cache" / "huggingface"))
 import mlx.core as mx
 
 from feature_reuse.klein import CHECKPOINT, CHECKPOINT_REVISION, GUIDANCE, SIZE, decode, denoise, encode_prompt, load_klein
+from feature_reuse.klein import ModelConfig, klein_scheduler
 from feature_reuse.reuse import FixedInterval, SpeCa, TeaCache
 from feature_reuse.guidance import parse_guidance
 from feature_reuse.samplers import SAMPLERS
 from feature_reuse.sharpeuler import sigma_grid
-from feature_reuse.spectrum import Spectrum
+from feature_reuse.spectrum import LastBlockTaylor, Spectrum
 from feature_reuse.vde import VDE
 
 REUSE_STEPS = 50
@@ -67,13 +68,16 @@ def parse_config(name: str, profile=None):
             guidance = parse_guidance(suffix)
         else:
             raise ValueError(f"repeated sampler or guidance {suffix!r} in config {name!r}")
-    if match := re.fullmatch(r"sharpeuler-(\d+)", base):
+    if match := re.fullmatch(r"sharpeuler(-tail)?-(\d+)", base):
         if profile is None:
             raise ValueError("Pass --sharpeuler-profile for the sharpeuler configuration")
         if sampler not in (None, "euler") or guidance not in (None, parse_guidance("cfg")):
             raise ValueError("SharpEuler calibration uses Euler and plain CFG")
-        steps = int(match[1])
-        return steps, None, "euler", parse_guidance("cfg"), sigma_grid(steps, profile["sharpness"])
+        steps = int(match[2])
+        if steps < 2:
+            raise ValueError("SharpEuler needs at least two steps")
+        tail = klein_scheduler(ModelConfig.flux2_klein_base_4b(), steps).sigmas[-2].item() if match[1] else None
+        return steps, None, "euler", parse_guidance("cfg"), sigma_grid(steps, profile["sharpness"], tail)
     steps, policy = parse_policy(base)
     if isinstance(policy, VDE) and guidance not in (None, parse_guidance("cfg")):
         raise ValueError("VDE forecasts a single velocity field and requires plain CFG")
@@ -97,10 +101,16 @@ def parse_policy(name: str):
         return REUSE_STEPS, SpeCa(0.3, 0.5, REUSE_STEPS, min_predicted=100)
     if name == "spectrum":
         return REUSE_STEPS, Spectrum()
+    if match := re.fullmatch(r"spectrum-fixed-(\d+)", name):
+        return REUSE_STEPS, Spectrum(interval=int(match[1]), fixed=True)
+    if match := re.fullmatch(r"taylor-last-(\d+)", name):
+        return REUSE_STEPS, LastBlockTaylor(interval=int(match[1]))
     if match := re.fullmatch(r"spectrum-([\d.]+)", name):
         return REUSE_STEPS, Spectrum(growth=float(match[1]))
     if match := re.fullmatch(r"vde-(\d+)", name):
         return REUSE_STEPS, VDE(interval=int(match[1]))
+    if match := re.fullmatch(r"velocity-linear-(\d+)", name):
+        return REUSE_STEPS, VDE(interval=int(match[1]), decompose=False)
     if name == "teacache":
         return REUSE_STEPS, TeaCache(0.11, REUSE_STEPS)
     if match := re.fullmatch(r"teacache(-taylor)?-([\d.]+)", name):

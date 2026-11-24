@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import mlx.core as mx
 
-from feature_reuse.spectrum import SpectralForecast, Spectrum
+from feature_reuse.spectrum import LastBlockLinearForecast, LastBlockTaylor, SpectralForecast, Spectrum
 
 
 def _check_curvature_weight(weight: float) -> None:
@@ -222,19 +222,20 @@ class BlockReuse:
         return output
 
 
-class _SpectrumReuse(BlockReuse):
+class _LastBlockReuse(BlockReuse):
     """Forecast image features at the boundary between the blocks and the output head."""
 
-    def __init__(self, policy: Spectrum, sigmas: list[float]) -> None:
+    def __init__(self, policy: Spectrum | LastBlockTaylor, sigmas: list[float]) -> None:
         super().__init__(policy)
         self.refresh = policy.refresh_steps(len(sigmas) - 1)
         self.forecasts = {
-            branch: SpectralForecast(policy, sigmas) for branch in ("cond", "uncond")
+            branch: SpectralForecast(policy, sigmas) if isinstance(policy, Spectrum) else LastBlockLinearForecast(sigmas)
+            for branch in ("cond", "uncond")
         }
 
     def begin_step(self, step: int, branches=("cond", "uncond")) -> None:
         self.step = step
-        if step in self.refresh or any(self.forecasts[b].rhs is None for b in branches):
+        if step in self.refresh or any(not self.forecasts[b].arrays() for b in branches):
             self._start_full_step()
         else:
             self.skip = True
@@ -253,7 +254,7 @@ class _SpectrumReuse(BlockReuse):
         return output
 
     def arrays(self) -> list[mx.array]:
-        return [forecast.rhs for forecast in self.forecasts.values() if forecast.rhs is not None]
+        return [array for forecast in self.forecasts.values() for array in forecast.arrays()]
 
 
 class _DoubleBlock:
@@ -286,7 +287,7 @@ class _SingleBlock:
 
 @contextmanager
 def reuse_blocks(transformer, policy, sigmas=None):
-    reuse = _SpectrumReuse(policy, sigmas) if isinstance(policy, Spectrum) else BlockReuse(policy)
+    reuse = _LastBlockReuse(policy, sigmas) if isinstance(policy, (Spectrum, LastBlockTaylor)) else BlockReuse(policy)
     if policy is None:
         yield reuse
         return

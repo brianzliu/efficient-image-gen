@@ -276,6 +276,12 @@ Calibrate SharpEuler once with development prompts in a separate text file, one 
 
 SharpEuler uses plain CFG and Euler, matching its calibration. VDE forecasts the CFG-combined velocity and uses plain CFG. Compare `sampling_steps`, `full_steps`, and `full_transformer_passes` in the measurements to see the work each method performed.
 
+### Controlled comparisons
+
+- Compare `spectrum` with `spectrum-fixed-3` to vary the refresh schedule while forecasting the same tensor with the same Chebyshev fit. Compare `spectrum-fixed-3` with `taylor-last-3` to vary the predictor while keeping the tensor and all 17 full steps matched. The last-block Taylor variant extrapolates in sigma space.
+- Compare `vde-4` with `velocity-linear-4`. Both run the same 18 full steps. The linear control extrapolates the entire CFG-combined velocity from its two latest full evaluations.
+- Compare `full-17`, `sharpeuler-17`, and `sharpeuler-tail-17` under plain CFG and Euler. The tail-aligned variant matches the last interval of the native Klein grid and rescales the earlier SharpEuler grid to keep 17 steps. Both SharpEuler variants use the same calibration profile.
+
 ### Profiling the evaluator
 
 Every timed trial records encode, denoise, and decode times, phase peaks and end-of-phase MLX allocations, and the active allocation before generation. Weights stay resident throughout the evaluator. Alan's standalone memory study unloaded the encoder before denoising, so its absolute memory figures describe a different setup. The manifest and baseline cache key record any MLX command-buffer settings in the environment. [Alan's profiling study](results/profile.md)

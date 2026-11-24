@@ -82,10 +82,12 @@ def main():
     reward_available = summaries[0]["image_reward"] is not None
     axes[1].set(xlabel="Mean warm generation latency (seconds/image)",ylabel="Mean ImageReward" if reward_available else "Mean CLIP alignment score",title="Automated quality versus latency")
     fig.suptitle(f"Klein Base 4B Q4 · {manifest['hardware']} · {identity['size']} × {identity['size']}")
-    fig.text(.04,.085,"    ".join(f"{i+1}: {name}" for i,name in enumerate(names[:4])),fontsize=10)
-    fig.text(.04,.05,"    ".join(f"{i+5}: {name}" for i,name in enumerate(names[4:])),fontsize=10)
+    legend_lines = [names[i:i+4] for i in range(0, len(names), 4)]
+    for index, line in enumerate(legend_lines):
+        fig.text(.04, .05 + .035 * (len(legend_lines) - index - 1),
+                 "    ".join(f"{4*index+i+1}: {name}" for i, name in enumerate(line)),fontsize=10)
     fig.text(.01,.01,"Points average the measured prompt/seed pairs. See the accompanying results for individual trials.",fontsize=8)
-    fig.tight_layout(rect=[0,.13,1,.95]); fig.savefig(args.report / "tradeoffs.png",dpi=160); plt.close(fig)
+    fig.tight_layout(rect=[0,.06+.035*len(legend_lines),1,.95]); fig.savefig(args.report / "tradeoffs.png",dpi=160); plt.close(fig)
     fig, axes = plt.subplots(1,2,figsize=(13,5))
     axes[0].barh(names,[s["total_s"] for s in summaries]); axes[0].set(xlabel="Mean seconds/image",title="Warm generation latency")
     axes[1].barh(names,[s["peak_mlx_gb"] for s in summaries]); axes[1].set(xlabel="Mean per-trial peak MLX allocation (GB, decimal)",title="Full generation window allocation")
@@ -120,6 +122,8 @@ def main():
         lines += ["Spectrum forecasts last-block image features with a Chebyshev fit updated on full steps.", ""]
     if any(name.startswith("vde-") for name in names):
         lines += ["VDE predicts the guided velocity between full transformer steps using the current latent and the two most recent full predictions.", ""]
+    if any(name.startswith("velocity-linear-") for name in names):
+        lines += ["Linear velocity extrapolation predicts the same guided output using two full predictions and the same refresh schedule as VDE.", ""]
     if any(name.startswith("teacache") for name in names):
         lines += ["TeaCache reuses a transformer residual when accumulated input changes stay below the configured threshold.", ""]
     if "sharpeuler_profile" in identity:

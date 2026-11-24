@@ -3,7 +3,7 @@
 import numpy as np
 
 
-def sigma_grid(budget: int, sharpness: list[float]) -> list[float]:
+def sigma_grid(budget: int, sharpness: list[float], terminal_sigma: float | None = None) -> list[float]:
     """Generate a decreasing sigma grid from a profile on uniform calibration midpoints."""
     try:
         profile = np.asarray(sharpness, dtype=np.float64)
@@ -19,7 +19,13 @@ def sigma_grid(budget: int, sharpness: list[float]) -> list[float]:
     cdf = np.r_[0.0, np.cumsum(weights) / weights.sum()]
     midpoints = np.arange(1, profile.size + 1) / (profile.size + 1)
     quantiles = np.arange(budget) / budget
-    grid = np.r_[1 - np.interp(quantiles, cdf, np.r_[0.0, midpoints]), 0.0].astype(np.float32)
+    grid = np.r_[1 - np.interp(quantiles, cdf, np.r_[0.0, midpoints]), 0.0]
+    if terminal_sigma is not None:
+        if not 0 < terminal_sigma < 1:
+            raise ValueError("SharpEuler terminal sigma must be between zero and one")
+        last = grid[-2]
+        grid[:-1] = terminal_sigma + (1 - terminal_sigma) * (grid[:-1] - last) / (1 - last)
+    grid = grid.astype(np.float32)
     if not np.all(np.diff(grid) < 0):
         raise ValueError("SharpEuler schedule contains duplicate timesteps at float32 precision")
     return grid.tolist()
