@@ -19,6 +19,7 @@ import mlx.core as mx
 
 from feature_reuse.klein import CHECKPOINT, CHECKPOINT_REVISION, GUIDANCE, SIZE, decode, denoise, encode_prompt, load_klein
 from feature_reuse.klein import ModelConfig, klein_scheduler
+from feature_reuse.racfg import RACFGCache
 from feature_reuse.reuse import FixedInterval, SpeCa, TeaCache
 from feature_reuse.guidance import parse_guidance
 from feature_reuse.samplers import SAMPLERS
@@ -111,6 +112,8 @@ def parse_policy(name: str):
         return REUSE_STEPS, VDE(interval=int(match[1]))
     if match := re.fullmatch(r"velocity-linear-(\d+)", name):
         return REUSE_STEPS, VDE(interval=int(match[1]), decompose=False)
+    if match := re.fullmatch(r"racfg(-taylor)?-([\d.]+)", name):
+        return REUSE_STEPS, RACFGCache(float(match[2]), GUIDANCE, forecast=bool(match[1]))
     if name == "teacache":
         return REUSE_STEPS, TeaCache(0.11, REUSE_STEPS)
     if match := re.fullmatch(r"teacache(-taylor)?-([\d.]+)", name):

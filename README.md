@@ -10,7 +10,7 @@ Our [initial ablation pilot](reports/klein-ablation-pilot/README.md) contains 40
 
 The steps below reproduce the pilot protocol with the current code. They do not guarantee identical timings or pixels on different hardware or software versions. The saved manifest records the original environment and source hash; the report was published in commit `ec3232b`. Sampler and guidance extensions were added afterward and are covered separately below.
 
-Alan's [earlier three-seed study](results/summary.md) uses a different measurement scope. Its reproduction commands are at the end of this guide.
+Alan's [earlier three-seed study](results/feature-reuse/summary.md) uses a different measurement scope. Its reproduction commands are at the end of this guide.
 
 ## Accessing and storing the data
 
@@ -66,7 +66,24 @@ uv pip install --python .venv-quality/bin/python -r requirements-quality.txt
 
 ImageReward uses older Transformers and Diffusers APIs that conflict with the generation environment. Keep scoring in `.venv-quality` and run it after generation. Scoring may download additional pretrained models on its first run.
 
-## 2. Check generation and correctness
+## Profiling a chip
+
+To compare Macs fairly, each team member runs the same profile on their own machine:
+
+```sh
+.venv/bin/python scripts/profile-chip.py
+```
+
+Plug the Mac in, turn Low Power Mode off, and close other apps first. A run takes about 5 minutes on an M2 Pro (about 10 on a base M4) and writes `results/chips/<chip>.json`; commit that file to share it. Keep the default settings: runs with other settings are marked non-standard and should not be compared with standard ones.
+
+The script uses the same prompt, seed, size, guidance and step count on every machine, and records the chip, GPU core count, memory, macOS, MLX and MFLUX versions, git commit, and power state. Every timed configuration gets an untimed warm-up run, and every timing is repeated, with the median, minimum and maximum reported. It reports:
+
+- Stage times for model load, prompt encoding, denoising per step, and image decoding.
+- Memory as MLX's peak of arrays in use, that peak plus MLX's cache of freed buffers, and the whole process footprint that macOS reports.
+- Denoising time split by double blocks, single blocks and the rest, then split further into the single blocks' `to_qkv_mlp_proj`, attention and activations, `to_out`, and residual parts. Timing a part needs MLX to finish its queued work at that point, which it otherwise delays. The script forces this only at the end of each part, which added 1% to 2% to step time on an M2 Pro; the overhead is reported in every run.
+- How close the GPU is to its limits: achieved TFLOPS against a float16 matmul benchmark on the same chip, and the transformer's weight reads against a measured memory bandwidth. The hot layers' own TFLOPS are reported too.
+- Drift: denoising is timed again at the end, so a slowdown from heat shows up as a change.
+
 
 A short execution check confirms that the model can run:
 
@@ -253,7 +270,7 @@ These configurations use the same pinned Klein Base 4B Q4 checkpoint, 512 × 512
 | `sharpeuler-17` | Seventeen full steps on a sigma grid calibrated from guided velocities. This implements the paper’s uniform-reference-grid algorithm. Compare with `full-17` to isolate timestep placement. [SharpEuler paper](https://arxiv.org/abs/2605.11547) |
 | `vde-4` | Seven warmup steps, then a full step every four updates, with a full final step. This uses 18 full steps across 50 updates. In between, VDE extrapolates the guided velocity from the two most recent full steps using the current latent. [VDE paper](https://arxiv.org/abs/2605.23381) |
 
-Alan's calibrated TeaCache is available as `teacache-0.11` and `teacache-taylor-0.11`. [Klein TeaCache results](results/teacache.md)
+Alan's calibrated TeaCache is available as `teacache-0.11` and `teacache-taylor-0.11`. [Klein TeaCache results](results/feature-reuse/teacache.md)
 
 Calibrate SharpEuler once with development prompts in a separate text file, one per line. Use different prompts in the benchmark when measuring generalization. The runner records the calibration and exact sigma grid in the manifest. Calibration time is outside the generation measurements.
 
@@ -284,13 +301,13 @@ SharpEuler uses plain CFG and Euler, matching its calibration. VDE forecasts the
 
 ### Profiling the evaluator
 
-Every timed trial records encode, denoise, and decode times, phase peaks and end-of-phase MLX allocations, and the active allocation before generation. Weights stay resident throughout the evaluator. Alan's standalone memory study unloaded the encoder before denoising, so its absolute memory figures describe a different setup. The manifest and baseline cache key record any MLX command-buffer settings in the environment. [Alan's profiling study](results/profile.md)
+Every timed trial records encode, denoise, and decode times, phase peaks and end-of-phase MLX allocations, and the active allocation before generation. Weights stay resident throughout the evaluator. Alan's standalone memory study unloaded the encoder before denoising, so its absolute memory figures describe a different setup. The manifest and baseline cache key record any MLX command-buffer settings in the environment. [Alan's profiling study](results/profiling/profile.md)
 
 With `--profile blocks`, the evaluator replays the first selected prompt and seed once per configuration after all timed trials. It records exclusive transformer, double-block, and single-block times, calls, and peak allocation above entry memory. Use `--profile ops` for the finer breakdown, including linear projections, attention, rotary embeddings, and estimated multiply-accumulate counts where available. The GPU synchronization used for profiling changes runtime and can change memory behavior. The evaluator saves these diagnostics in `profile.json` separately from the timed measurements and resumes incomplete profiles by configuration. Omit the flag for a run with phase measurements only.
 
 ## Earlier three-seed benchmark
 
-To rerun the protocol behind [results/summary.md](results/summary.md), use the generation environment and downloaded checkpoint from step 1:
+To rerun the protocol behind [results/feature-reuse/summary.md](results/feature-reuse/summary.md), use the generation environment and downloaded checkpoint from step 1:
 
 ```sh
 .venv/bin/python scripts/benchmark-klein.py --out outputs/benchmark \

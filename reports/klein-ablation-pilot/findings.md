@@ -32,7 +32,7 @@ All 40 images were scored with LPIPS, SSIM, PSNR, CLIP alignment, and ImageRewar
 
 One seed and one repeat provide no estimate of cross-seed robustness or repeat-to-repeat timing variation. Configuration order rotates, but the machine was not isolated and had substantial system-wide swap usage. Small latency and energy differences remain uncertain. The first prompt also overlapped evaluator dependency preparation before scoring; the fully matched energy subset was collected later. All generation completed before CPU quality scoring began.
 
-Alan's separate [three-seed preliminary benchmark](../../results/summary.md) measures denoising after unloading the text encoder. Its timing and memory scope differs from this resident-weight, full-generation evaluator. Keep the datasets separate rather than pooling their latency or memory figures.
+Alan's separate [three-seed preliminary benchmark](../../results/feature-reuse/summary.md) measures denoising after unloading the text encoder. Its timing and memory scope differs from this resident-weight, full-generation evaluator. Keep the datasets separate rather than pooling their latency or memory figures.
 
 ## Next experiment
 
