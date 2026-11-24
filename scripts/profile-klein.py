@@ -15,6 +15,10 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("HF_HOME", str(ROOT / ".cache" / "huggingface"))
 
 import mlx.core as mx
+from mflux.models.flux.model.flux_transformer.common.attention_utils import AttentionUtils
+from mflux.models.flux2.model.flux2_transformer.attention import Flux2Attention
+from mflux.models.flux2.model.flux2_transformer.feed_forward import Flux2FeedForward
+from mflux.models.flux2.model.flux2_transformer.parallel_self_attention import Flux2ParallelSelfAttention
 from mflux.models.flux2.model.flux2_transformer.single_transformer_block import Flux2SingleTransformerBlock
 from mflux.models.flux2.model.flux2_transformer.transformer import Flux2Transformer
 from mflux.models.flux2.model.flux2_transformer.transformer_block import Flux2TransformerBlock
@@ -22,7 +26,6 @@ from mlx import nn
 from mlx.utils import tree_flatten
 
 import feature_reuse.klein as klein
-from feature_reuse.profiling import BLOCK_TARGETS, OP_TARGETS, arrays, profile_summary, profiled
 
 GB = 1000**3
 SEED = 42
@@ -31,12 +34,100 @@ SWEEP_STEPS = 3
 EVAL_STEPS = 5
 
 
+def linear_macs(args: tuple, kwargs: dict, output: mx.array) -> int:
+    return output.size * args[1].shape[-1]
+
+
+def attention_macs(args: tuple, kwargs: dict, output: mx.array) -> int:
+    heads, tokens, head_dim = kwargs["query"].shape[1:]
+    return 2 * heads * tokens**2 * head_dim
+
+
+BLOCK_TARGETS = [
+    (Flux2Transformer, "__call__", "transformer", None),
+    (Flux2TransformerBlock, "__call__", "double_block", None),
+    (Flux2SingleTransformerBlock, "__call__", "single_block", None),
+]
+OP_TARGETS = BLOCK_TARGETS + [
+    (Flux2Attention, "__call__", "attention", None),
+    (Flux2ParallelSelfAttention, "__call__", "attention", None),
+    (Flux2FeedForward, "__call__", "feed_forward", None),
+    (AttentionUtils, "compute_attention", "dot_product", attention_macs),
+    (AttentionUtils, "apply_rope_bshd", "rope", None),
+    (nn.QuantizedLinear, "__call__", "linear", linear_macs),
+    (nn.Linear, "__call__", "linear", linear_macs),
+]
 EVAL_TARGETS = {
     "step": [],
     "pass": [(Flux2Transformer, "__call__")],
     "block": [(Flux2TransformerBlock, "__call__"), (Flux2SingleTransformerBlock, "__call__")],
     "linear": [(nn.QuantizedLinear, "__call__")],
 }
+
+
+def arrays(value) -> list[mx.array]:
+    if isinstance(value, mx.array):
+        return [value]
+    if isinstance(value, nn.Module):
+        return []
+    if isinstance(value, dict):
+        value = list(value.values())
+    if isinstance(value, (list, tuple)):
+        return [array for item in value for array in arrays(item)]
+    return []
+
+
+class Profiler:
+    def __init__(self) -> None:
+        self.seconds = defaultdict(float)
+        self.calls = defaultdict(int)
+        self.macs = defaultdict(int)
+        self.transient = defaultdict(int)
+        self.path = []
+        self.child_seconds = []
+
+    def run(self, name: str, count_macs, fn, args: tuple, kwargs: dict):
+        # Finish pending work first, so it counts toward the caller and not this operation.
+        mx.eval(arrays(args), arrays(kwargs))
+        self.path.append(name)
+        self.child_seconds.append(0.0)
+        path = "/".join(self.path)
+        mx.reset_peak_memory()
+        active = mx.get_active_memory()
+        start = perf_counter()
+        output = fn(*args, **kwargs)
+        mx.eval(arrays(output))
+        elapsed = perf_counter() - start
+        self.transient[path] = max(self.transient[path], mx.get_peak_memory() - active)
+        self.seconds[path] += elapsed - self.child_seconds.pop()
+        self.calls[path] += 1
+        if count_macs:
+            self.macs[path] += count_macs(args, kwargs, output)
+        self.path.pop()
+        if self.child_seconds:
+            self.child_seconds[-1] += elapsed
+        return output
+
+
+@contextmanager
+def profiled(targets: list):
+    profiler = Profiler()
+    originals = []
+    for owner, attribute, name, count_macs in targets:
+        original = owner.__dict__[attribute]
+        is_static = isinstance(original, staticmethod)
+        function = original.__func__ if is_static else original
+
+        def wrapper(*args, _name=name, _count=count_macs, _function=function, **kwargs):
+            return profiler.run(_name, _count, _function, args, kwargs)
+
+        setattr(owner, attribute, staticmethod(wrapper) if is_static else wrapper)
+        originals.append((owner, attribute, original))
+    try:
+        yield profiler
+    finally:
+        for owner, attribute, original in originals:
+            setattr(owner, attribute, original)
 
 
 @contextmanager
@@ -97,6 +188,21 @@ def weight_summary(module) -> dict:
         "quantized_gb": quantized / GB,
         "unquantized_gb": (stored - quantized) / GB,
         "quantized_as_float16_gb": expanded / GB,
+    }
+
+
+def profile_summary(profiler: Profiler, step_seconds: float) -> dict:
+    return {
+        "denoise_s": step_seconds,
+        "paths": {
+            path: {
+                "seconds": seconds,
+                "calls": profiler.calls[path],
+                "macs": profiler.macs[path],
+                "transient_mb": profiler.transient[path] / 1000**2,
+            }
+            for path, seconds in sorted(profiler.seconds.items(), key=lambda item: -item[1])
+        },
     }
 
 

@@ -66,7 +66,24 @@ uv pip install --python .venv-quality/bin/python -r requirements-quality.txt
 
 ImageReward uses older Transformers and Diffusers APIs that conflict with the generation environment. Keep scoring in `.venv-quality` and run it after generation. Scoring may download additional pretrained models on its first run.
 
-## 2. Check generation and correctness
+## Profiling a chip
+
+To compare Macs fairly, each team member runs the same profile on their own machine:
+
+```sh
+.venv/bin/python scripts/profile-chip.py
+```
+
+Plug the Mac in, turn Low Power Mode off, and close other apps first. A run takes about 5 minutes on an M2 Pro (about 10 on a base M4) and writes `results/chips/<chip>.json`; commit that file to share it. Keep the default settings: runs with other settings are marked non-standard and should not be compared with standard ones.
+
+The script uses the same prompt, seed, size, guidance and step count on every machine, and records the chip, GPU core count, memory, macOS, MLX and MFLUX versions, git commit, and power state. Every timed configuration gets an untimed warm-up run, and every timing is repeated, with the median, minimum and maximum reported. It reports:
+
+- Stage times for model load, prompt encoding, denoising per step, and image decoding.
+- Memory as MLX's peak of arrays in use, that peak plus MLX's cache of freed buffers, and the whole process footprint that macOS reports.
+- Denoising time split by double blocks, single blocks and the rest, then split further into the single blocks' `to_qkv_mlp_proj`, attention and activations, `to_out`, and residual parts. Timing a part needs MLX to finish its queued work at that point, which it otherwise delays. The script forces this only at the end of each part, which added 1% to 2% to step time on an M2 Pro; the overhead is reported in every run.
+- How close the GPU is to its limits: achieved TFLOPS against a float16 matmul benchmark on the same chip, and the transformer's weight reads against a measured memory bandwidth. The hot layers' own TFLOPS are reported too.
+- Drift: denoising is timed again at the end, so a slowdown from heat shows up as a change.
+
 
 A short execution check confirms that the model can run:
 
